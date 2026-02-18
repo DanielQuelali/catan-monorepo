@@ -173,16 +173,16 @@ codex exec \
 
 ### TODO (Agent E - Implementation Owner)
 
-- [ ] Introduce reusable scratch/reversible evaluation context for candidate scoring
-- [ ] Replace clone-per-action branch with apply/rollback flow
-- [ ] Keep action tie-break and deterministic ordering unchanged
-- [ ] Keep epsilon random branch behavior unchanged
+- [x] Introduce reusable scratch/reversible evaluation context for candidate scoring
+- [x] Replace clone-per-action branch with apply/rollback flow
+- [x] Keep action tie-break and deterministic ordering unchanged
+- [x] Keep epsilon random branch behavior unchanged
 
 ### TODO (Agent F - Verification Owner)
 
-- [ ] Add tests asserting selected action equivalence on fixed states/seeds
-- [ ] Add full playout equivalence tests for fixed seed sets
-- [ ] Measure release performance delta and record before/after numbers
+- [x] Add tests asserting selected action equivalence on fixed states/seeds
+- [x] Add full playout equivalence tests for fixed seed sets
+- [x] Measure release performance delta and record before/after numbers
 
 ## PR4: Kernel State Layout
 

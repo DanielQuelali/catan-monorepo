@@ -196,6 +196,47 @@ pub struct ValueComponents {
     pub reachable_zero_by_res: [f64; RESOURCE_COUNT],
 }
 
+struct DecideEvalContext {
+    baseline_state: State,
+    baseline_road_state: RoadState,
+    baseline_army_state: ArmyState,
+    scratch_state: State,
+    scratch_road_state: RoadState,
+    scratch_army_state: ArmyState,
+}
+
+impl DecideEvalContext {
+    fn new(state: &State, road_state: &RoadState, army_state: &ArmyState) -> Self {
+        Self {
+            baseline_state: state.clone(),
+            baseline_road_state: *road_state,
+            baseline_army_state: *army_state,
+            scratch_state: state.clone(),
+            scratch_road_state: *road_state,
+            scratch_army_state: *army_state,
+        }
+    }
+
+    #[inline]
+    fn apply(&mut self, board: &Board, action: &ValueAction, rng: &mut impl RngCore) {
+        apply_value_action(
+            board,
+            &mut self.scratch_state,
+            &mut self.scratch_road_state,
+            &mut self.scratch_army_state,
+            action,
+            rng,
+        );
+    }
+
+    #[inline]
+    fn rollback(&mut self) {
+        self.scratch_state.clone_from(&self.baseline_state);
+        self.scratch_road_state = self.baseline_road_state;
+        self.scratch_army_state = self.baseline_army_state;
+    }
+}
+
 impl FastValueFunctionPlayer {
     pub fn new(weights: Option<ValueWeights>, epsilon: Option<f64>) -> Self {
         Self {
@@ -290,19 +331,17 @@ impl FastValueFunctionPlayer {
 
         let mut best_value = f64::NEG_INFINITY;
         let mut best_action = actions[0].clone();
+        let mut eval = DecideEvalContext::new(state, road_state, army_state);
         for action in actions {
-            let mut state_copy = state.clone();
-            let mut road_copy = *road_state;
-            let mut army_copy = *army_state;
-            apply_value_action(
+            eval.apply(board, &action, rng);
+            let value = self.value(
                 board,
-                &mut state_copy,
-                &mut road_copy,
-                &mut army_copy,
-                &action,
-                rng,
+                &eval.scratch_state,
+                &eval.scratch_road_state,
+                &eval.scratch_army_state,
+                player,
             );
-            let value = self.value(board, &state_copy, &road_copy, &army_copy, player);
+            eval.rollback();
             if value > best_value {
                 best_value = value;
                 best_action = action;

@@ -1,0 +1,16 @@
+.DS_Store
+
+# JS/TS
+apps/catanatron-ui
+node_modules/
+dist/
+coverage/
+
+# Rust
+**/target/
+data/analysis/
+
+# Local env/editor
+.env
+.vscode/
+.idea/

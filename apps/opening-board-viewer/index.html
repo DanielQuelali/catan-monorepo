@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Opening Board Viewer</title>
+  <link rel="stylesheet" href="/apps/opening-board-viewer/styles.css" />
+</head>
+<body>
+  <div class="wrap">
+    <div class="panel controls">
+      <button id="prevBtn">Previous</button>
+      <button id="nextBtn">Next</button>
+      <select id="sampleSelect"></select>
+      <span class="muted" id="status">Loading...</span>
+      <span class="muted" id="dataPath"></span>
+    </div>
+
+    <div class="panel">
+      <svg id="board" viewBox="0 0 760 620"></svg>
+    </div>
+
+    <div class="panel meta">
+      <h3>Board Details</h3>
+      <pre id="metaText"></pre>
+      <h4>Ports (order)</h4>
+      <div class="ports" id="ports"></div>
+      <h4>Opening Placements</h4>
+      <pre id="placementsText">-</pre>
+    </div>
+  </div>
+  <script src="/apps/opening-board-viewer/app.js"></script>
+</body>
+</html>

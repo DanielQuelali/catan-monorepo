@@ -1,0 +1,344 @@
+{
+  "schema_version": 1,
+  "generator": "scripts/generate_opening_states.py",
+  "count": 12,
+  "seed": 20260217,
+  "samples": [
+    {
+      "id": "0001",
+      "board_file": "boards/board_0001.json",
+      "state_file": "states/state_0001.json",
+      "board_seed": 14342831753562256582,
+      "bot_seed": 7067643045531573255,
+      "red1": {
+        "settlement": 10,
+        "road": [
+          9,
+          10
+        ]
+      },
+      "blue1": {
+        "settlement": 22,
+        "road": [
+          20,
+          22
+        ]
+      },
+      "orange1": {
+        "settlement": 14,
+        "road": [
+          14,
+          15
+        ]
+      }
+    },
+    {
+      "id": "0002",
+      "board_file": "boards/board_0002.json",
+      "state_file": "states/state_0002.json",
+      "board_seed": 6446166138163063764,
+      "bot_seed": 13983189856472294390,
+      "red1": {
+        "settlement": 9,
+        "road": [
+          8,
+          9
+        ]
+      },
+      "blue1": {
+        "settlement": 18,
+        "road": [
+          16,
+          18
+        ]
+      },
+      "orange1": {
+        "settlement": 11,
+        "road": [
+          11,
+          12
+        ]
+      }
+    },
+    {
+      "id": "0003",
+      "board_file": "boards/board_0003.json",
+      "state_file": "states/state_0003.json",
+      "board_seed": 9041209653763461147,
+      "bot_seed": 18405719901097660072,
+      "red1": {
+        "settlement": 12,
+        "road": [
+          11,
+          12
+        ]
+      },
+      "blue1": {
+        "settlement": 6,
+        "road": [
+          1,
+          6
+        ]
+      },
+      "orange1": {
+        "settlement": 9,
+        "road": [
+          9,
+          10
+        ]
+      }
+    },
+    {
+      "id": "0004",
+      "board_file": "boards/board_0004.json",
+      "state_file": "states/state_0004.json",
+      "board_seed": 15847504343242567081,
+      "bot_seed": 13447591710907261281,
+      "red1": {
+        "settlement": 3,
+        "road": [
+          3,
+          4
+        ]
+      },
+      "blue1": {
+        "settlement": 10,
+        "road": [
+          9,
+          10
+        ]
+      },
+      "orange1": {
+        "settlement": 18,
+        "road": [
+          16,
+          18
+        ]
+      }
+    },
+    {
+      "id": "0005",
+      "board_file": "boards/board_0005.json",
+      "state_file": "states/state_0005.json",
+      "board_seed": 10627780423497101786,
+      "bot_seed": 18034317655614866068,
+      "red1": {
+        "settlement": 21,
+        "road": [
+          16,
+          21
+        ]
+      },
+      "blue1": {
+        "settlement": 3,
+        "road": [
+          2,
+          3
+        ]
+      },
+      "orange1": {
+        "settlement": 23,
+        "road": [
+          6,
+          23
+        ]
+      }
+    },
+    {
+      "id": "0006",
+      "board_file": "boards/board_0006.json",
+      "state_file": "states/state_0006.json",
+      "board_seed": 14928958335995890000,
+      "bot_seed": 15193941833513751951,
+      "red1": {
+        "settlement": 10,
+        "road": [
+          10,
+          11
+        ]
+      },
+      "blue1": {
+        "settlement": 15,
+        "road": [
+          4,
+          15
+        ]
+      },
+      "orange1": {
+        "settlement": 23,
+        "road": [
+          22,
+          23
+        ]
+      }
+    },
+    {
+      "id": "0007",
+      "board_file": "boards/board_0007.json",
+      "state_file": "states/state_0007.json",
+      "board_seed": 17486686147404228000,
+      "bot_seed": 10270410958767666955,
+      "red1": {
+        "settlement": 23,
+        "road": [
+          6,
+          23
+        ]
+      },
+      "blue1": {
+        "settlement": 12,
+        "road": [
+          3,
+          12
+        ]
+      },
+      "orange1": {
+        "settlement": 17,
+        "road": [
+          15,
+          17
+        ]
+      }
+    },
+    {
+      "id": "0008",
+      "board_file": "boards/board_0008.json",
+      "state_file": "states/state_0008.json",
+      "board_seed": 2962132318461679823,
+      "bot_seed": 13146460218691999930,
+      "red1": {
+        "settlement": 12,
+        "road": [
+          11,
+          12
+        ]
+      },
+      "blue1": {
+        "settlement": 16,
+        "road": [
+          5,
+          16
+        ]
+      },
+      "orange1": {
+        "settlement": 0,
+        "road": [
+          0,
+          1
+        ]
+      }
+    },
+    {
+      "id": "0009",
+      "board_file": "boards/board_0009.json",
+      "state_file": "states/state_0009.json",
+      "board_seed": 16753074248007154649,
+      "bot_seed": 3962895774140533484,
+      "red1": {
+        "settlement": 21,
+        "road": [
+          16,
+          21
+        ]
+      },
+      "blue1": {
+        "settlement": 3,
+        "road": [
+          2,
+          3
+        ]
+      },
+      "orange1": {
+        "settlement": 23,
+        "road": [
+          6,
+          23
+        ]
+      }
+    },
+    {
+      "id": "0010",
+      "board_file": "boards/board_0010.json",
+      "state_file": "states/state_0010.json",
+      "board_seed": 16964776669298896497,
+      "bot_seed": 6931157835852704657,
+      "red1": {
+        "settlement": 9,
+        "road": [
+          8,
+          9
+        ]
+      },
+      "blue1": {
+        "settlement": 18,
+        "road": [
+          16,
+          18
+        ]
+      },
+      "orange1": {
+        "settlement": 23,
+        "road": [
+          6,
+          23
+        ]
+      }
+    },
+    {
+      "id": "0011",
+      "board_file": "boards/board_0011.json",
+      "state_file": "states/state_0011.json",
+      "board_seed": 5502807223433392204,
+      "bot_seed": 5627708079961964226,
+      "red1": {
+        "settlement": 12,
+        "road": [
+          11,
+          12
+        ]
+      },
+      "blue1": {
+        "settlement": 21,
+        "road": [
+          16,
+          21
+        ]
+      },
+      "orange1": {
+        "settlement": 8,
+        "road": [
+          8,
+          9
+        ]
+      }
+    },
+    {
+      "id": "0012",
+      "board_file": "boards/board_0012.json",
+      "state_file": "states/state_0012.json",
+      "board_seed": 747415778771012039,
+      "bot_seed": 13317433724423506307,
+      "red1": {
+        "settlement": 12,
+        "road": [
+          11,
+          12
+        ]
+      },
+      "blue1": {
+        "settlement": 20,
+        "road": [
+          0,
+          20
+        ]
+      },
+      "orange1": {
+        "settlement": 7,
+        "road": [
+          7,
+          8
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,182 @@
+:root {
+  --bg: #f6f7f2;
+  --ink: #1f2329;
+  --panel: #ffffff;
+  --line: #d0d7de;
+  --accent: #0f6cbd;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  color: var(--ink);
+  background: radial-gradient(1200px 800px at 85% -10%, #e4efe6, var(--bg));
+}
+
+h3,
+h4 {
+  margin: 0 0 8px;
+}
+
+h4 {
+  margin-top: 10px;
+}
+
+.wrap {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 16px;
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 12px;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.05);
+  padding: 12px;
+}
+
+.controls {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+button,
+select {
+  height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  padding: 0 10px;
+}
+
+button {
+  cursor: pointer;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+button[disabled] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.muted {
+  color: #5a6472;
+  font-size: 13px;
+}
+
+#dataPath {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace;
+}
+
+.meta pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.ports {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.chip {
+  font-size: 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  padding: 3px 8px;
+  background: #f8fafc;
+}
+
+#board {
+  width: 100%;
+  max-width: 760px;
+  height: auto;
+  display: block;
+  margin: 0 auto;
+}
+
+.hex {
+  stroke: #253047;
+  stroke-width: 1.2;
+}
+
+.placement-road {
+  stroke-linecap: round;
+  opacity: 0.9;
+}
+
+.placement-settlement {
+  fill: #ffffff;
+}
+
+.placement-label {
+  font-size: 12px;
+  font-weight: 700;
+  fill: #0f172a;
+  stroke: #ffffff;
+  stroke-width: 2;
+  paint-order: stroke;
+  text-anchor: middle;
+  dominant-baseline: middle;
+}
+
+.port-tag {
+  fill: #ffffff;
+  stroke: #364152;
+  stroke-width: 1;
+  opacity: 0.98;
+}
+
+.port-label {
+  font-size: 11px;
+  font-weight: 700;
+  fill: #111827;
+  text-anchor: middle;
+  dominant-baseline: middle;
+}
+
+.port-link {
+  stroke: #364152;
+  stroke-width: 2;
+  stroke-linecap: round;
+  opacity: 0.9;
+}
+
+.tile-num {
+  font-weight: 700;
+  font-size: 18px;
+  text-anchor: middle;
+  dominant-baseline: middle;
+}
+
+.tile-id {
+  font-size: 10px;
+  text-anchor: middle;
+  fill: #1f2329;
+  opacity: 0.7;
+}
+
+@media (max-width: 900px) {
+  .wrap {
+    grid-template-columns: 1fr;
+  }
+}

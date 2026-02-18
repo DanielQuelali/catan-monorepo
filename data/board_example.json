@@ -1,0 +1,58 @@
+{
+"tile_resources": [
+  "WOOD",
+
+  "WOOD",
+  "BRICK",
+  "BRICK",
+  "ORE",
+  "WOOD",
+  null,
+  
+  "SHEEP",
+  "WHEAT",
+  "SHEEP",
+  "SHEEP",
+  "SHEEP",
+  "ORE",
+  "ORE",
+  "WHEAT",
+  "WHEAT",
+  "WHEAT",
+  "WOOD",
+  "BRICK"
+],
+"numbers": [
+  11,
+  
+  9,
+  3,
+  6,
+  5,
+  4,
+  
+  5,
+  10,
+  8,
+  4,
+  11,
+  12,
+  9,
+  10,
+  8,
+  3,
+  6,
+  2
+],
+    "port_resources": [
+      null,
+      "SHEEP",
+      null,
+      null,
+      "BRICK",
+      "WOOD",
+      null,
+      "WHEAT",
+      "ORE"
+    ]
+  }

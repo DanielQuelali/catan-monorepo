@@ -1,0 +1,6 @@
+[workspace]
+members = [
+  "crates/fastcore",
+  "crates/initial-branch-analysis",
+]
+resolver = "2"

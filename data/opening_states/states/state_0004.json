@@ -1,0 +1,83 @@
+{
+  "colors": [
+    "RED",
+    "BLUE",
+    "ORANGE",
+    "WHITE"
+  ],
+  "bot_colors": [
+    "RED",
+    "BLUE",
+    "ORANGE",
+    "WHITE"
+  ],
+  "is_initial_build_phase": true,
+  "current_color": "WHITE",
+  "current_prompt": "BUILD_INITIAL_SETTLEMENT",
+  "state_index": 6,
+  "board_file": "boards/board_0004.json",
+  "actions": [
+    [
+      "RED",
+      "BUILD_SETTLEMENT",
+      3
+    ],
+    [
+      "RED",
+      "BUILD_ROAD",
+      [
+        3,
+        4
+      ]
+    ],
+    [
+      "BLUE",
+      "BUILD_SETTLEMENT",
+      10
+    ],
+    [
+      "BLUE",
+      "BUILD_ROAD",
+      [
+        9,
+        10
+      ]
+    ],
+    [
+      "ORANGE",
+      "BUILD_SETTLEMENT",
+      18
+    ],
+    [
+      "ORANGE",
+      "BUILD_ROAD",
+      [
+        16,
+        18
+      ]
+    ]
+  ],
+  "placements": {
+    "red1": {
+      "settlement": 3,
+      "road": [
+        3,
+        4
+      ]
+    },
+    "blue1": {
+      "settlement": 10,
+      "road": [
+        9,
+        10
+      ]
+    },
+    "orange1": {
+      "settlement": 18,
+      "road": [
+        16,
+        18
+      ]
+    }
+  }
+}

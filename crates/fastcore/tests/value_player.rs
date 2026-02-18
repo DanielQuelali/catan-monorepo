@@ -25,7 +25,7 @@ fn decide_prioritizes_road_building() {
     let start_node = 0;
     state.node_owner[start_node] = 0;
     state.node_level[start_node] = BuildingLevel::Settlement;
-    state.road_components[0].push(vec![start_node as u8]);
+    state.road_components[0].push_singleton(start_node as u8);
 
     let dev_idx = DevCard::RoadBuilding.as_index();
     state.dev_cards_in_hand[0][dev_idx] = 1;
@@ -229,7 +229,7 @@ fn setup_city_choice_state() -> State {
     for node in [0usize, 10usize] {
         state.node_owner[node] = 0;
         state.node_level[node] = BuildingLevel::Settlement;
-        state.road_components[0].push(vec![node as u8]);
+        state.road_components[0].push_singleton(node as u8);
     }
 
     state
@@ -243,7 +243,7 @@ fn setup_pre_roll_monopoly_state() -> State {
     state.turn_player = 0;
     state.node_owner[0] = 0;
     state.node_level[0] = BuildingLevel::Settlement;
-    state.road_components[0].push(vec![0]);
+    state.road_components[0].push_singleton(0);
 
     let monopoly = DevCard::Monopoly.as_index();
     state.dev_cards_in_hand[0][monopoly] = 1;

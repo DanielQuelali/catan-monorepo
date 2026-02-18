@@ -56,9 +56,7 @@ fn node_has_friendly_road(board: &Board, state: &State, node: NodeId, player: Pl
 }
 
 fn node_in_component(state: &State, player: PlayerId, node: NodeId) -> bool {
-    state.road_components[player as usize]
-        .iter()
-        .any(|component| component.contains(&node))
+    state.road_components[player as usize].contains_node(node)
 }
 
 fn node_is_adjacent_occupied(board: &Board, state: &State, node: NodeId) -> bool {

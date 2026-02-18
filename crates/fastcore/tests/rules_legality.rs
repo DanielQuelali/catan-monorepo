@@ -18,7 +18,7 @@ fn build_road_legality_requires_connection_and_resources() {
 
     seed_player_resources(&mut state, 0, 10);
     state.set_building(0, 0, BuildingLevel::Settlement, &mut delta);
-    state.road_components[0].push(vec![0]);
+    state.road_components[0].push_singleton(0);
 
     assert!(rules::is_legal_build_road(board, &state, 0, 0));
 

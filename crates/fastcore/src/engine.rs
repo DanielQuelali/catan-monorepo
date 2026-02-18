@@ -4,11 +4,11 @@ use crate::delta::Delta;
 use crate::rng::next_u64_mod;
 use crate::rng::{rng_for_stream, roll_die, shuffle_with_rng};
 use crate::rules;
-use crate::state::State;
+use crate::state::{ComponentNodeIter, State};
 use crate::stats::{EvalStats, Stats};
 use crate::types::{
     ActionPrompt, BuildingLevel, DevCard, EdgeId, NodeId, PlayerId, Resource, TileId, TurnPhase,
-    EDGE_COUNT, NODE_COUNT, PLAYER_COUNT, PYTHON_RESOURCE_ORDER, RESOURCE_COUNT,
+    EDGE_COUNT, INVALID_EDGE, NODE_COUNT, PLAYER_COUNT, PYTHON_RESOURCE_ORDER, RESOURCE_COUNT,
 };
 use rand_core::RngCore;
 
@@ -586,7 +586,7 @@ pub(crate) fn apply_initial_settlement(
     let mut delta = Delta::default();
     state.set_building(node, player, BuildingLevel::Settlement, &mut delta);
     state.last_initial_settlement[player as usize] = node;
-    state.road_components[player as usize].push(vec![node]);
+    state.road_components[player as usize].push_singleton(node);
 
     let count = player_settlement_count(state, player);
     if count == 2 {
@@ -616,7 +616,7 @@ pub(crate) fn apply_initial_settlement_kernel(
     let player = state.active_player;
     state.set_building_kernel(node, player, BuildingLevel::Settlement);
     state.last_initial_settlement[player as usize] = node;
-    state.road_components[player as usize].push(vec![node]);
+    state.road_components[player as usize].push_singleton(node);
 
     let count = player_settlement_count(state, player);
     if count == 2 {
@@ -1939,11 +1939,9 @@ pub(crate) fn is_legal_build_road_free(
         return false;
     }
     let nodes = board.edge_nodes[edge as usize];
-    nodes.iter().any(|node| {
-        state.road_components[player as usize]
-            .iter()
-            .any(|c| c.contains(node))
-    })
+    nodes
+        .iter()
+        .any(|node| state.road_components[player as usize].contains_node(*node))
 }
 
 fn update_largest_army(
@@ -1978,28 +1976,12 @@ fn update_largest_army(
     }
 }
 
-fn component_index(components: &[Vec<NodeId>], node: NodeId) -> Option<usize> {
-    components
-        .iter()
-        .position(|component| component.contains(&node))
-}
-
-fn add_node_to_component(component: &mut Vec<NodeId>, node: NodeId) {
-    if !component.contains(&node) {
-        component.push(node);
+#[inline]
+fn node_mask(node: NodeId) -> u64 {
+    if node as usize >= NODE_COUNT {
+        return 0;
     }
-}
-
-fn merge_components(components: &mut Vec<Vec<NodeId>>, a_idx: usize, b_idx: usize) {
-    let (keep, remove) = if a_idx < b_idx {
-        (a_idx, b_idx)
-    } else {
-        (b_idx, a_idx)
-    };
-    let mut extra = components.remove(remove);
-    for node in extra.drain(..) {
-        add_node_to_component(&mut components[keep], node);
-    }
+    1u64 << node
 }
 
 fn is_enemy_node(state: &State, player: PlayerId, node: NodeId) -> bool {
@@ -2007,24 +1989,25 @@ fn is_enemy_node(state: &State, player: PlayerId, node: NodeId) -> bool {
     owner != crate::types::NO_PLAYER && owner != player
 }
 
-fn dfs_walk(
+fn dfs_walk_mask(
     board: &crate::board::Board,
     state: &State,
     player: PlayerId,
     start: NodeId,
-) -> Vec<NodeId> {
+) -> u64 {
     let mut visited = [false; NODE_COUNT];
-    let mut agenda = Vec::new();
-    agenda.push(start);
-    let mut nodes = Vec::new();
+    let mut agenda = [0u8; NODE_COUNT];
+    let mut agenda_len = 0usize;
+    agenda[agenda_len] = start;
+    agenda_len += 1;
+    visited[start as usize] = true;
+    let mut nodes = 0u64;
 
-    while let Some(node) = agenda.pop() {
+    while agenda_len > 0 {
+        agenda_len -= 1;
+        let node = agenda[agenda_len];
         let idx = node as usize;
-        if visited[idx] {
-            continue;
-        }
-        visited[idx] = true;
-        nodes.push(node);
+        nodes |= node_mask(node);
 
         if is_enemy_node(state, player, node) {
             continue;
@@ -2044,7 +2027,10 @@ fn dfs_walk(
                 edge_nodes[0]
             };
             if !visited[neighbor as usize] {
-                agenda.push(neighbor);
+                visited[neighbor as usize] = true;
+                debug_assert!(agenda_len < NODE_COUNT);
+                agenda[agenda_len] = neighbor;
+                agenda_len += 1;
             }
         }
     }
@@ -2065,20 +2051,20 @@ fn update_components_on_build_road(
     let enemy_b = is_enemy_node(state, player, b);
     let components = &mut state.road_components[player as usize];
 
-    let a_idx = component_index(components, a);
-    let b_idx = component_index(components, b);
+    let a_idx = components.component_index(a);
+    let b_idx = components.component_index(b);
 
     if a_idx.is_none() && !enemy_a {
         if let Some(idx) = b_idx {
-            add_node_to_component(&mut components[idx], a);
+            components.add_node_to_component(idx, a);
         }
     } else if b_idx.is_none() && !enemy_b {
         if let Some(idx) = a_idx {
-            add_node_to_component(&mut components[idx], b);
+            components.add_node_to_component(idx, b);
         }
     } else if let (Some(ai), Some(bi)) = (a_idx, b_idx) {
         if ai != bi {
-            merge_components(components, ai, bi);
+            components.merge_components(ai, bi);
         }
     }
 }
@@ -2089,7 +2075,9 @@ fn update_components_on_build_settlement(
     player: PlayerId,
     node: NodeId,
 ) -> Vec<PlayerId> {
-    let mut edges_by_color: [Vec<EdgeId>; PLAYER_COUNT] = std::array::from_fn(|_| Vec::new());
+    let mut edge_counts = [0u8; PLAYER_COUNT];
+    let mut first_edge = [INVALID_EDGE; PLAYER_COUNT];
+    let mut second_edge = [INVALID_EDGE; PLAYER_COUNT];
     let mut plowed = Vec::new();
 
     for edge in board.node_edges[node as usize] {
@@ -2100,17 +2088,23 @@ fn update_components_on_build_settlement(
         if owner == crate::types::NO_PLAYER || owner == player {
             continue;
         }
-        edges_by_color[owner as usize].push(edge);
+        let owner_idx = owner as usize;
+        if edge_counts[owner_idx] == 0 {
+            first_edge[owner_idx] = edge;
+        } else if edge_counts[owner_idx] == 1 {
+            second_edge[owner_idx] = edge;
+        }
+        edge_counts[owner_idx] = edge_counts[owner_idx].saturating_add(1);
     }
 
-    for (owner_idx, edges) in edges_by_color.iter().enumerate() {
-        if edges.len() != 2 {
+    for owner_idx in 0..PLAYER_COUNT {
+        if edge_counts[owner_idx] != 2 {
             continue;
         }
         let owner = owner_idx as PlayerId;
         plowed.push(owner);
-        let edge_a = edges[0];
-        let edge_b = edges[1];
+        let edge_a = first_edge[owner_idx];
+        let edge_b = second_edge[owner_idx];
         let nodes_a = board.edge_nodes[edge_a as usize];
         let nodes_b = board.edge_nodes[edge_b as usize];
         let a = if nodes_a[0] == node {
@@ -2124,15 +2118,15 @@ fn update_components_on_build_settlement(
             nodes_b[0]
         };
 
-        let a_nodes = dfs_walk(board, state, owner, a);
-        let c_nodes = dfs_walk(board, state, owner, c);
+        let a_nodes = dfs_walk_mask(board, state, owner, a);
+        let c_nodes = dfs_walk_mask(board, state, owner, c);
 
         let components = &mut state.road_components[owner_idx];
-        if let Some(idx) = component_index(components, node) {
-            components.remove(idx);
+        if let Some(idx) = components.component_index(node) {
+            components.remove_component(idx);
         }
-        components.push(a_nodes);
-        components.push(c_nodes);
+        components.push_mask(a_nodes);
+        components.push_mask(c_nodes);
     }
 
     plowed
@@ -2208,21 +2202,38 @@ pub(crate) fn longest_road_for_player(
     state: &State,
     player: PlayerId,
 ) -> u8 {
-    let mut edges_by_node: Vec<Vec<EdgeId>> = vec![Vec::new(); NODE_COUNT];
+    let mut edges_by_node = [[INVALID_EDGE; 3]; NODE_COUNT];
+    let mut edge_counts = [0u8; NODE_COUNT];
     for edge_id in 0..EDGE_COUNT {
         if state.edge_owner[edge_id] != player {
             continue;
         }
         let nodes = board.edge_nodes[edge_id];
-        edges_by_node[nodes[0] as usize].push(edge_id as u8);
-        edges_by_node[nodes[1] as usize].push(edge_id as u8);
+        let a = nodes[0] as usize;
+        let b = nodes[1] as usize;
+        let a_idx = edge_counts[a] as usize;
+        let b_idx = edge_counts[b] as usize;
+        debug_assert!(a_idx < edges_by_node[a].len());
+        debug_assert!(b_idx < edges_by_node[b].len());
+        edges_by_node[a][a_idx] = edge_id as u8;
+        edges_by_node[b][b_idx] = edge_id as u8;
+        edge_counts[a] += 1;
+        edge_counts[b] += 1;
     }
 
     let mut best = 0u8;
-    for component in &state.road_components[player as usize] {
-        for &node in component {
-            let mut used = vec![false; EDGE_COUNT];
-            let length = dfs_longest_path(board, state, player, node, &edges_by_node, &mut used);
+    for component in state.road_components[player as usize].iter_masks() {
+        for node in ComponentNodeIter::from_mask(component) {
+            let mut used = [false; EDGE_COUNT];
+            let length = dfs_longest_path(
+                board,
+                state,
+                player,
+                node,
+                &edges_by_node,
+                &edge_counts,
+                &mut used,
+            );
             if length > best {
                 best = length;
             }
@@ -2236,11 +2247,14 @@ fn dfs_longest_path(
     state: &State,
     player: PlayerId,
     node: NodeId,
-    edges_by_node: &[Vec<EdgeId>],
-    used: &mut [bool],
+    edges_by_node: &[[EdgeId; 3]; NODE_COUNT],
+    edge_counts: &[u8; NODE_COUNT],
+    used: &mut [bool; EDGE_COUNT],
 ) -> u8 {
     let mut best = 0u8;
-    for &edge in &edges_by_node[node as usize] {
+    let node_idx = node as usize;
+    for edge_slot in 0..edge_counts[node_idx] as usize {
+        let edge = edges_by_node[node_idx][edge_slot];
         let edge_idx = edge as usize;
         if used[edge_idx] {
             continue;
@@ -2253,7 +2267,8 @@ fn dfs_longest_path(
             used[edge_idx] = false;
             continue;
         }
-        let length = 1 + dfs_longest_path(board, state, player, next, edges_by_node, used);
+        let length =
+            1 + dfs_longest_path(board, state, player, next, edges_by_node, edge_counts, used);
         if length > best {
             best = length;
         }

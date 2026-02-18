@@ -195,17 +195,17 @@ codex exec \
 
 ### TODO (Agent G - Implementation Owner)
 
-- [ ] Design fixed-size or pooled representation for road connectivity
-- [ ] Design kernel-friendly development deck representation
-- [ ] Update engine/value logic to use new representations
-- [ ] Preserve external behavior and serialization assumptions
+- [x] Design fixed-size or pooled representation for road connectivity
+- [x] Design kernel-friendly development deck representation
+- [x] Update engine/value logic to use new representations
+- [x] Preserve external behavior and serialization assumptions
 
 ### TODO (Agent H - Verification Owner)
 
-- [ ] Build migration helpers/adapters where old representation is referenced
-- [ ] Extend property tests for invariants after long random action sequences
-- [ ] Run full feature-matrix test suite and deterministic diff suite
-- [ ] Rebaseline and document performance impact
+- [x] Build migration helpers/adapters where old representation is referenced
+- [x] Extend property tests for invariants after long random action sequences
+- [x] Run full feature-matrix test suite and deterministic diff suite
+- [x] Rebaseline and document performance impact
 
 ## Coordination Checklist (All Agents)
 

@@ -7,8 +7,8 @@ use fastcore::types::{
     RESOURCE_COUNT,
 };
 use fastcore::value_player::{
-    apply_value_action, generate_playable_actions, FastValueFunctionPlayer, ValueAction,
-    ValueActionKind,
+    apply_value_action, apply_value_action_kernel, generate_playable_actions,
+    FastValueFunctionPlayer, ValueAction, ValueActionKind,
 };
 #[cfg(feature = "stackelberg_pruning")]
 use rand::Rng;
@@ -73,6 +73,39 @@ struct PlayoutResult {
     winner: Option<PlayerId>,
     vps_by_player: [u8; PLAYER_COUNT],
     num_turns: u32,
+}
+
+#[derive(Clone, Debug, Default)]
+struct PlayoutAggregate {
+    wins: [u64; PLAYER_COUNT],
+    total_non_none: u64,
+    total_vps: [u64; PLAYER_COUNT],
+    total_turns: u64,
+    samples: u64,
+}
+
+impl PlayoutAggregate {
+    fn update(&mut self, result: &PlayoutResult) {
+        self.samples += 1;
+        if let Some(winner) = result.winner {
+            self.wins[winner as usize] += 1;
+            self.total_non_none += 1;
+        }
+        for idx in 0..PLAYER_COUNT {
+            self.total_vps[idx] += result.vps_by_player[idx] as u64;
+        }
+        self.total_turns += result.num_turns as u64;
+    }
+
+    fn merge(&mut self, other: &Self) {
+        self.total_non_none += other.total_non_none;
+        self.total_turns += other.total_turns;
+        self.samples += other.samples;
+        for idx in 0..PLAYER_COUNT {
+            self.wins[idx] += other.wins[idx];
+            self.total_vps[idx] += other.total_vps[idx];
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1204,7 +1237,7 @@ fn simulate_from_state_with_scratch(
         let player = scratch_state.active_player as usize;
         let action =
             players[player].decide(board, scratch_state, &road_state, &army_state, &mut rng);
-        apply_value_action(
+        apply_value_action_kernel(
             board,
             scratch_state,
             &mut road_state,
@@ -1227,26 +1260,6 @@ fn simulate_from_state_with_scratch(
     }
 }
 
-fn win_probabilities(results: &[PlayoutResult]) -> [f64; PLAYER_COUNT] {
-    let mut counts = [0u32; PLAYER_COUNT];
-    let mut total = 0u32;
-    for result in results {
-        if let Some(winner) = result.winner {
-            counts[winner as usize] += 1;
-            total += 1;
-        }
-    }
-    if total == 0 {
-        return [0.0; PLAYER_COUNT];
-    }
-    let mut probs = [0.0; PLAYER_COUNT];
-    for idx in 0..PLAYER_COUNT {
-        probs[idx] = ((counts[idx] as f64 / total as f64) * 100.0 * 10.0).round() / 10.0;
-    }
-    probs
-}
-
-#[cfg(feature = "stackelberg_pruning")]
 fn win_probabilities_from_counts(wins: &[u64; PLAYER_COUNT], total: u64) -> [f64; PLAYER_COUNT] {
     if total == 0 {
         return [0.0; PLAYER_COUNT];
@@ -1258,25 +1271,6 @@ fn win_probabilities_from_counts(wins: &[u64; PLAYER_COUNT], total: u64) -> [f64
     probs
 }
 
-fn average_vps(results: &[PlayoutResult]) -> [f64; PLAYER_COUNT] {
-    if results.is_empty() {
-        return [0.0; PLAYER_COUNT];
-    }
-    let mut totals = [0u32; PLAYER_COUNT];
-    for result in results {
-        for idx in 0..PLAYER_COUNT {
-            totals[idx] += result.vps_by_player[idx] as u32;
-        }
-    }
-    let count = results.len() as f64;
-    let mut avg = [0.0; PLAYER_COUNT];
-    for idx in 0..PLAYER_COUNT {
-        avg[idx] = (totals[idx] as f64 / count * 100.0).round() / 100.0;
-    }
-    avg
-}
-
-#[cfg(feature = "stackelberg_pruning")]
 fn average_vps_from_totals(totals: &[u64; PLAYER_COUNT], sims_run: u64) -> [f64; PLAYER_COUNT] {
     if sims_run == 0 {
         return [0.0; PLAYER_COUNT];
@@ -1289,16 +1283,6 @@ fn average_vps_from_totals(totals: &[u64; PLAYER_COUNT], sims_run: u64) -> [f64;
     avg
 }
 
-fn average_turns(results: &[PlayoutResult]) -> f64 {
-    if results.is_empty() {
-        return 0.0;
-    }
-    let total: u64 = results.iter().map(|r| r.num_turns as u64).sum();
-    let avg = total as f64 / results.len() as f64;
-    (avg * 100.0).round() / 100.0
-}
-
-#[cfg(feature = "stackelberg_pruning")]
 fn average_turns_from_total(total_turns: u64, sims_run: u64) -> f64 {
     if sims_run == 0 {
         return 0.0;
@@ -1369,7 +1353,7 @@ fn summarize_playouts(
     let worker_count = effective_workers(workers, seeds.len());
     let wall_start = Instant::now();
 
-    let results = run_playouts(
+    let aggregate = run_playouts(
         board,
         state,
         road_state,
@@ -1381,9 +1365,9 @@ fn summarize_playouts(
     let wall_time = wall_start.elapsed().as_secs_f64();
     let cpu_time = wall_time;
 
-    let win_probs = win_probabilities(&results);
-    let avg_vps = average_vps(&results);
-    let avg_turns = average_turns(&results);
+    let win_probs = win_probabilities_from_counts(&aggregate.wins, aggregate.total_non_none);
+    let avg_vps = average_vps_from_totals(&aggregate.total_vps, aggregate.samples);
+    let avg_turns = average_turns_from_total(aggregate.total_turns, aggregate.samples);
     let winner_label = dominant_winner_label(colors, &win_probs);
 
     PlayoutSummary {
@@ -2121,73 +2105,77 @@ fn run_playouts(
     seeds: &[u64],
     workers: usize,
     max_turns: u32,
-) -> Vec<PlayoutResult> {
+) -> PlayoutAggregate {
     if workers <= 1 || seeds.len() <= 1 {
         let mut scratch_state = state.clone();
         let players = std::array::from_fn(|_| FastValueFunctionPlayer::new(None, None));
-        return seeds
-            .iter()
-            .map(|seed| {
-                simulate_from_state_with_scratch(
-                    board,
-                    state,
-                    road_state,
-                    army_state,
-                    *seed,
-                    max_turns,
-                    &mut scratch_state,
-                    &players,
-                )
-            })
-            .collect();
+        let mut aggregate = PlayoutAggregate::default();
+        for seed in seeds {
+            let result = simulate_from_state_with_scratch(
+                board,
+                state,
+                road_state,
+                army_state,
+                *seed,
+                max_turns,
+                &mut scratch_state,
+                &players,
+            );
+            aggregate.update(&result);
+        }
+        return aggregate;
     }
 
     #[cfg(feature = "parallel")]
     {
         use rayon::prelude::*;
+        let chunk_size = ((seeds.len() + workers - 1) / workers).max(1);
         return seeds
-            .par_iter()
-            .map_init(
-                || {
-                    let scratch_state = state.clone();
-                    let players = std::array::from_fn(|_| FastValueFunctionPlayer::new(None, None));
-                    (scratch_state, players)
-                },
-                |(scratch_state, players), seed| {
-                    simulate_from_state_with_scratch(
+            .par_chunks(chunk_size)
+            .map(|chunk| {
+                let mut scratch_state = state.clone();
+                let players = std::array::from_fn(|_| FastValueFunctionPlayer::new(None, None));
+                let mut aggregate = PlayoutAggregate::default();
+                for seed in chunk {
+                    let result = simulate_from_state_with_scratch(
                         board,
                         state,
                         road_state,
                         army_state,
                         *seed,
                         max_turns,
-                        scratch_state,
-                        players,
-                    )
-                },
-            )
-            .collect();
+                        &mut scratch_state,
+                        &players,
+                    );
+                    aggregate.update(&result);
+                }
+                aggregate
+            })
+            .reduce(PlayoutAggregate::default, |mut acc, part| {
+                acc.merge(&part);
+                acc
+            });
     }
 
     #[cfg(not(feature = "parallel"))]
     {
         let mut scratch_state = state.clone();
         let players = std::array::from_fn(|_| FastValueFunctionPlayer::new(None, None));
-        seeds
-            .iter()
-            .map(|seed| {
-                simulate_from_state_with_scratch(
-                    board,
-                    state,
-                    road_state,
-                    army_state,
-                    *seed,
-                    max_turns,
-                    &mut scratch_state,
-                    &players,
-                )
-            })
-            .collect()
+        let mut aggregate = PlayoutAggregate::default();
+        for seed in seeds {
+            let result = simulate_from_state_with_scratch(
+                board,
+                state,
+                road_state,
+                army_state,
+                *seed,
+                max_turns,
+                &mut scratch_state,
+                &players,
+            );
+            aggregate.update(&result);
+        }
+        aggregate
     }
 }
 
@@ -4476,6 +4464,130 @@ fn csv_headers(colors: &[String], white12: bool) -> Vec<String> {
         headers.push(format!("AVG_VP_{color}"));
     }
     headers
+}
+
+#[cfg(test)]
+mod playout_aggregation_tests {
+    use super::*;
+
+    fn legacy_win_probabilities(results: &[PlayoutResult]) -> [f64; PLAYER_COUNT] {
+        let mut counts = [0u32; PLAYER_COUNT];
+        let mut total = 0u32;
+        for result in results {
+            if let Some(winner) = result.winner {
+                counts[winner as usize] += 1;
+                total += 1;
+            }
+        }
+        if total == 0 {
+            return [0.0; PLAYER_COUNT];
+        }
+        let mut probs = [0.0; PLAYER_COUNT];
+        for idx in 0..PLAYER_COUNT {
+            probs[idx] = ((counts[idx] as f64 / total as f64) * 100.0 * 10.0).round() / 10.0;
+        }
+        probs
+    }
+
+    fn legacy_average_vps(results: &[PlayoutResult]) -> [f64; PLAYER_COUNT] {
+        if results.is_empty() {
+            return [0.0; PLAYER_COUNT];
+        }
+        let mut totals = [0u32; PLAYER_COUNT];
+        for result in results {
+            for idx in 0..PLAYER_COUNT {
+                totals[idx] += result.vps_by_player[idx] as u32;
+            }
+        }
+        let mut avg = [0.0; PLAYER_COUNT];
+        let count = results.len() as f64;
+        for idx in 0..PLAYER_COUNT {
+            avg[idx] = (totals[idx] as f64 / count * 100.0).round() / 100.0;
+        }
+        avg
+    }
+
+    fn legacy_average_turns(results: &[PlayoutResult]) -> f64 {
+        if results.is_empty() {
+            return 0.0;
+        }
+        let total: u64 = results.iter().map(|r| r.num_turns as u64).sum();
+        let avg = total as f64 / results.len() as f64;
+        (avg * 100.0).round() / 100.0
+    }
+
+    fn synthetic_results() -> Vec<PlayoutResult> {
+        vec![
+            PlayoutResult {
+                winner: Some(0),
+                vps_by_player: [10, 8, 6, 4],
+                num_turns: 50,
+            },
+            PlayoutResult {
+                winner: Some(2),
+                vps_by_player: [7, 6, 10, 5],
+                num_turns: 40,
+            },
+            PlayoutResult {
+                winner: None,
+                vps_by_player: [9, 7, 9, 6],
+                num_turns: 60,
+            },
+            PlayoutResult {
+                winner: Some(2),
+                vps_by_player: [6, 5, 10, 8],
+                num_turns: 45,
+            },
+        ]
+    }
+
+    #[test]
+    fn playout_aggregate_matches_legacy_reducers() {
+        let results = synthetic_results();
+        let mut aggregate = PlayoutAggregate::default();
+        for result in &results {
+            aggregate.update(result);
+        }
+
+        assert_eq!(
+            win_probabilities_from_counts(&aggregate.wins, aggregate.total_non_none),
+            legacy_win_probabilities(&results)
+        );
+        assert_eq!(
+            average_vps_from_totals(&aggregate.total_vps, aggregate.samples),
+            legacy_average_vps(&results)
+        );
+        assert_eq!(
+            average_turns_from_total(aggregate.total_turns, aggregate.samples),
+            legacy_average_turns(&results)
+        );
+    }
+
+    #[test]
+    fn playout_aggregate_merge_matches_single_pass() {
+        let results = synthetic_results();
+
+        let mut full = PlayoutAggregate::default();
+        for result in &results {
+            full.update(result);
+        }
+
+        let mut left = PlayoutAggregate::default();
+        for result in &results[..2] {
+            left.update(result);
+        }
+        let mut right = PlayoutAggregate::default();
+        for result in &results[2..] {
+            right.update(result);
+        }
+        left.merge(&right);
+
+        assert_eq!(left.samples, full.samples);
+        assert_eq!(left.total_non_none, full.total_non_none);
+        assert_eq!(left.total_turns, full.total_turns);
+        assert_eq!(left.wins, full.wins);
+        assert_eq!(left.total_vps, full.total_vps);
+    }
 }
 
 #[cfg(all(test, feature = "stackelberg_pruning"))]

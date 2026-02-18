@@ -1,12 +1,17 @@
 use crate::board::Board;
 use crate::board_data::{EDGE_NODES, TILE_COORDS};
 use crate::engine::{
-    apply_accept_trade, apply_build_city, apply_build_road, apply_build_settlement,
-    apply_cancel_trade, apply_confirm_trade, apply_discard, apply_end_turn, apply_initial_road,
-    apply_initial_settlement, apply_knight, apply_maritime_trade, apply_monopoly,
-    apply_move_robber, apply_reject_trade, apply_road_building, apply_roll, apply_year_of_plenty,
-    buy_dev_card, can_accept_trade, can_buy_dev_card, can_play_dev, is_legal_build_road_free,
-    player_has_building_on_tile, player_resource_total, trade_rate, ArmyState, RoadState,
+    apply_accept_trade, apply_build_city, apply_build_city_kernel, apply_build_road,
+    apply_build_road_kernel, apply_build_settlement, apply_build_settlement_kernel,
+    apply_cancel_trade, apply_confirm_trade, apply_confirm_trade_kernel, apply_discard,
+    apply_discard_kernel, apply_end_turn, apply_initial_road, apply_initial_road_kernel,
+    apply_initial_settlement, apply_initial_settlement_kernel, apply_knight, apply_maritime_trade,
+    apply_maritime_trade_kernel, apply_monopoly, apply_monopoly_kernel, apply_move_robber,
+    apply_move_robber_kernel, apply_reject_trade, apply_road_building, apply_roll,
+    apply_roll_kernel, apply_year_of_plenty, apply_year_of_plenty_kernel, buy_dev_card,
+    buy_dev_card_kernel, can_accept_trade, can_buy_dev_card, can_play_dev,
+    is_legal_build_road_free, player_has_building_on_tile, player_resource_total, trade_rate,
+    ArmyState, RoadState,
 };
 use crate::rng::{next_u64_mod, roll_die, shuffle_with_rng};
 use crate::rules;
@@ -801,6 +806,104 @@ pub fn apply_value_action(
         }
         ValueActionKind::ConfirmTrade(partner) => {
             apply_confirm_trade(state, partner);
+        }
+        ValueActionKind::CancelTrade => {
+            apply_cancel_trade(state);
+        }
+    }
+}
+
+pub fn apply_value_action_kernel(
+    board: &Board,
+    state: &mut State,
+    road_state: &mut RoadState,
+    army_state: &mut ArmyState,
+    action: &ValueAction,
+    rng: &mut impl RngCore,
+) {
+    match action.kind {
+        ValueActionKind::BuildSettlement(node) => {
+            if state.is_initial_build_phase
+                && state.current_prompt == ActionPrompt::BuildInitialSettlement
+            {
+                apply_initial_settlement_kernel(board, state, road_state, node);
+            } else {
+                apply_build_settlement_kernel(board, state, road_state, action.player, node);
+            }
+        }
+        ValueActionKind::BuildRoad(edge) => {
+            if state.is_initial_build_phase
+                && state.current_prompt == ActionPrompt::BuildInitialRoad
+            {
+                apply_initial_road_kernel(board, state, road_state, edge);
+            } else if state.is_road_building {
+                apply_build_road_kernel(board, state, road_state, action.player, edge, true);
+                state.free_roads_available = state.free_roads_available.saturating_sub(1);
+                if state.free_roads_available == 0 || !has_free_road(board, state, action.player) {
+                    state.is_road_building = false;
+                    state.free_roads_available = 0;
+                }
+            } else {
+                apply_build_road_kernel(board, state, road_state, action.player, edge, false);
+            }
+        }
+        ValueActionKind::BuildCity(node) => {
+            apply_build_city_kernel(board, state, action.player, node);
+        }
+        ValueActionKind::Roll => {
+            let roll = (roll_die(rng) as u32, roll_die(rng) as u32);
+            apply_roll_kernel(board, state, roll);
+        }
+        ValueActionKind::EndTurn => {
+            apply_end_turn(state, action.player);
+        }
+        ValueActionKind::Discard(counts) => {
+            let discard = counts.unwrap_or_else(|| {
+                random_discard_counts(&state.player_resources[action.player as usize], rng)
+            });
+            apply_discard_kernel(state, action.player, &discard);
+        }
+        ValueActionKind::MoveRobber {
+            tile,
+            victim,
+            resource,
+        } => {
+            let stolen = if victim.is_some() && resource.is_none() {
+                draw_random_resource(rng, &state.player_resources[victim.unwrap() as usize])
+            } else {
+                resource
+            };
+            apply_move_robber_kernel(state, tile, victim, stolen);
+        }
+        ValueActionKind::PlayYearOfPlenty(first, second) => {
+            apply_year_of_plenty_kernel(state, first, second);
+        }
+        ValueActionKind::PlayMonopoly(resource) => {
+            apply_monopoly_kernel(state, resource);
+        }
+        ValueActionKind::PlayKnight => {
+            apply_knight(state, army_state);
+            state.current_prompt = ActionPrompt::MoveRobber;
+            state.is_moving_robber = true;
+        }
+        ValueActionKind::PlayRoadBuilding => {
+            apply_road_building(state);
+            state.current_prompt = ActionPrompt::PlayTurn;
+        }
+        ValueActionKind::MaritimeTrade { offer, rate, ask } => {
+            apply_maritime_trade_kernel(state, action.player, offer, rate, ask);
+        }
+        ValueActionKind::BuyDevCard => {
+            let _ = buy_dev_card_kernel(state, action.player);
+        }
+        ValueActionKind::AcceptTrade => {
+            apply_accept_trade(state, action.player);
+        }
+        ValueActionKind::RejectTrade => {
+            apply_reject_trade(state, action.player);
+        }
+        ValueActionKind::ConfirmTrade(partner) => {
+            apply_confirm_trade_kernel(state, partner);
         }
         ValueActionKind::CancelTrade => {
             apply_cancel_trade(state);

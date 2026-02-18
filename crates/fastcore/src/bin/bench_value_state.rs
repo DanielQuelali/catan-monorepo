@@ -4,7 +4,7 @@ use fastcore::rng::rng_for_stream;
 use fastcore::state::State;
 use fastcore::types::{BuildingLevel, DevCard, EdgeId, NodeId, PlayerId, PLAYER_COUNT};
 use fastcore::value_player::{
-    apply_value_action, FastValueFunctionPlayer, ValueAction, ValueActionKind,
+    apply_value_action_kernel, FastValueFunctionPlayer, ValueAction, ValueActionKind,
 };
 use serde_json::Value;
 use std::env;
@@ -165,7 +165,7 @@ fn apply_initial_actions(
                 panic!("unsupported action type in initial state: {other}");
             }
         };
-        apply_value_action(
+        apply_value_action_kernel(
             board,
             &mut state,
             &mut road_state,
@@ -256,7 +256,7 @@ fn simulate_from_state(
 
         let player = state.active_player as usize;
         let action = players[player].decide(board, &state, &road_state, &army_state, rng);
-        apply_value_action(
+        apply_value_action_kernel(
             board,
             &mut state,
             &mut road_state,

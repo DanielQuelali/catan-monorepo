@@ -180,7 +180,7 @@ fn policy_step(
                 Some(node) => node,
                 None => return StepResult::Illegal,
             };
-            apply_initial_settlement(board, state, road_state, node);
+            apply_initial_settlement_kernel(board, state, road_state, node);
             log_action(&mut log, "BUILD_SETTLEMENT", Some(format!("{node}")));
             StepResult::Other
         }
@@ -189,14 +189,14 @@ fn policy_step(
                 Some(edge) => edge,
                 None => return StepResult::Illegal,
             };
-            apply_initial_road(board, state, road_state, edge);
+            apply_initial_road_kernel(board, state, road_state, edge);
             log_action(&mut log, "BUILD_ROAD", Some(format!("{edge}")));
             StepResult::Other
         }
         ActionPrompt::Discard => {
             let player = state.active_player;
             let discard = choose_discard(state, player, rng);
-            apply_discard(state, player, &discard);
+            apply_discard_kernel(state, player, &discard);
             log_action(&mut log, "DISCARD", Some(format_counts(&discard)));
             StepResult::Other
         }
@@ -204,7 +204,7 @@ fn policy_step(
             let player = state.active_player;
             let (tile, victim, resource) =
                 choose_robber_move(board, state, road_state, army_state, player, rng);
-            apply_move_robber(state, tile, victim, resource);
+            apply_move_robber_kernel(state, tile, victim, resource);
             log_action(
                 &mut log,
                 "MOVE_ROBBER",
@@ -234,7 +234,7 @@ fn policy_step(
         ActionPrompt::DecideAcceptees => {
             if let Some(partner) = first_acceptee(state) {
                 let trade = state.current_trade;
-                apply_confirm_trade(state, partner);
+                apply_confirm_trade_kernel(state, partner);
                 log_action(
                     &mut log,
                     "CONFIRM_TRADE",
@@ -264,7 +264,7 @@ fn play_turn_step(
 
     if state.is_road_building {
         if let Some(edge) = choose_free_road(board, state, player) {
-            apply_build_road(board, state, road_state, player, edge, true);
+            apply_build_road_kernel(board, state, road_state, player, edge, true);
             log_action(log, "BUILD_ROAD", Some(format!("{edge}")));
             state.free_roads_available = state.free_roads_available.saturating_sub(1);
             if state.free_roads_available == 0 || choose_free_road(board, state, player).is_none() {
@@ -278,39 +278,39 @@ fn play_turn_step(
     }
 
     if let Some((card, payload)) = choose_dev_play(board, state) {
-        apply_dev_play(board, state, road_state, army_state, card, payload, log);
+        apply_dev_play_kernel(board, state, road_state, army_state, card, payload, log);
         return StepResult::Other;
     }
 
     if !state.has_rolled[player as usize] {
         let roll = (roll_die(rng) as u32, roll_die(rng) as u32);
-        apply_roll(board, state, roll);
+        apply_roll_kernel(board, state, roll);
         log_action(log, "ROLL", Some(format!("{},{}", roll.0, roll.1)));
         return StepResult::Other;
     }
 
     if let Some(node) = choose_build_city(board, state, player) {
-        apply_build_city(board, state, player, node);
+        apply_build_city_kernel(board, state, player, node);
         log_action(log, "BUILD_CITY", Some(format!("{node}")));
         return StepResult::Other;
     }
     if let Some(node) = choose_build_settlement(board, state, player) {
-        apply_build_settlement(board, state, road_state, player, node);
+        apply_build_settlement_kernel(board, state, road_state, player, node);
         log_action(log, "BUILD_SETTLEMENT", Some(format!("{node}")));
         return StepResult::Other;
     }
     if let Some(edge) = choose_build_road(board, state, player) {
-        apply_build_road(board, state, road_state, player, edge, false);
+        apply_build_road_kernel(board, state, road_state, player, edge, false);
         log_action(log, "BUILD_ROAD", Some(format!("{edge}")));
         return StepResult::Other;
     }
     if can_buy_dev_card(state, player) {
-        let card = buy_dev_card(state, player);
+        let card = buy_dev_card_kernel(state, player);
         log_action(log, "BUY_DEV_CARD", Some(format_dev_card(card)));
         return StepResult::Other;
     }
     if let Some((offer, rate, ask)) = choose_maritime_trade(board, state, player) {
-        apply_maritime_trade(state, player, offer, rate, ask);
+        apply_maritime_trade_kernel(state, player, offer, rate, ask);
         log_action(
             log,
             "MARITIME_TRADE",
@@ -504,6 +504,14 @@ pub(crate) fn buy_dev_card(state: &mut State, player: PlayerId) -> DevCard {
     card
 }
 
+pub(crate) fn buy_dev_card_kernel(state: &mut State, player: PlayerId) -> DevCard {
+    pay_cost_kernel(state, player, rules::dev_card_cost());
+    let card = state.dev_deck.pop().unwrap_or(DevCard::Knight);
+    let idx = card.as_index();
+    state.dev_cards_in_hand[player as usize][idx] += 1;
+    card
+}
+
 fn choose_maritime_trade(
     board: &crate::board::Board,
     state: &State,
@@ -599,6 +607,36 @@ pub(crate) fn apply_initial_settlement(
     state.current_prompt = ActionPrompt::BuildInitialRoad;
 }
 
+pub(crate) fn apply_initial_settlement_kernel(
+    board: &crate::board::Board,
+    state: &mut State,
+    _road_state: &mut RoadState,
+    node: NodeId,
+) {
+    let player = state.active_player;
+    state.set_building_kernel(node, player, BuildingLevel::Settlement);
+    state.last_initial_settlement[player as usize] = node;
+    state.road_components[player as usize].push(vec![node]);
+
+    let count = player_settlement_count(state, player);
+    if count == 2 {
+        for tile in board.node_tiles[node as usize] {
+            if tile == crate::types::INVALID_TILE {
+                continue;
+            }
+            if let Some(resource) = board.tile_resources[tile as usize] {
+                if state.bank_resources[resource.as_index()] == 0 {
+                    continue;
+                }
+                state.adjust_resource_kernel(player, resource, 1);
+                state.adjust_bank_kernel(resource, -1);
+            }
+        }
+    }
+
+    state.current_prompt = ActionPrompt::BuildInitialRoad;
+}
+
 pub(crate) fn apply_initial_road(
     board: &crate::board::Board,
     state: &mut State,
@@ -608,6 +646,36 @@ pub(crate) fn apply_initial_road(
     let player = state.active_player;
     let mut delta = Delta::default();
     state.set_road_owner(edge, player, &mut delta);
+    update_components_on_build_road(board, state, player, edge);
+    update_longest_road_after_build_road(board, state, road_state, player);
+
+    let num_buildings = total_settlement_count(state);
+    let num_players = PLAYER_COUNT as u8;
+    let going_forward = num_buildings < num_players;
+    let at_the_end = num_buildings == num_players;
+    if going_forward {
+        advance_turn(state, 1);
+        state.current_prompt = ActionPrompt::BuildInitialSettlement;
+    } else if at_the_end {
+        state.current_prompt = ActionPrompt::BuildInitialSettlement;
+    } else if num_buildings == 2 * num_players {
+        state.is_initial_build_phase = false;
+        state.current_prompt = ActionPrompt::PlayTurn;
+        state.turn_phase = TurnPhase::Roll;
+    } else {
+        advance_turn(state, -1);
+        state.current_prompt = ActionPrompt::BuildInitialSettlement;
+    }
+}
+
+pub(crate) fn apply_initial_road_kernel(
+    board: &crate::board::Board,
+    state: &mut State,
+    road_state: &mut RoadState,
+    edge: EdgeId,
+) {
+    let player = state.active_player;
+    state.set_road_owner_kernel(edge, player);
     update_components_on_build_road(board, state, player, edge);
     update_longest_road_after_build_road(board, state, road_state, player);
 
@@ -642,6 +710,17 @@ pub(crate) fn apply_build_city(
     let _ = board;
 }
 
+pub(crate) fn apply_build_city_kernel(
+    board: &crate::board::Board,
+    state: &mut State,
+    player: PlayerId,
+    node: NodeId,
+) {
+    pay_cost_kernel(state, player, rules::city_cost());
+    state.set_building_kernel(node, player, BuildingLevel::City);
+    let _ = board;
+}
+
 pub(crate) fn apply_build_settlement(
     board: &crate::board::Board,
     state: &mut State,
@@ -652,6 +731,22 @@ pub(crate) fn apply_build_settlement(
     let mut delta = Delta::default();
     pay_cost(state, player, rules::settlement_cost(), &mut delta);
     state.set_building(node, player, BuildingLevel::Settlement, &mut delta);
+    let previous_owner = road_state.owner;
+    let plowed = update_components_on_build_settlement(board, state, player, node);
+    if !plowed.is_empty() {
+        update_longest_road_after_plow(board, state, road_state, &plowed, previous_owner);
+    }
+}
+
+pub(crate) fn apply_build_settlement_kernel(
+    board: &crate::board::Board,
+    state: &mut State,
+    road_state: &mut RoadState,
+    player: PlayerId,
+    node: NodeId,
+) {
+    pay_cost_kernel(state, player, rules::settlement_cost());
+    state.set_building_kernel(node, player, BuildingLevel::Settlement);
     let previous_owner = road_state.owner;
     let plowed = update_components_on_build_settlement(board, state, player, node);
     if !plowed.is_empty() {
@@ -672,6 +767,22 @@ pub(crate) fn apply_build_road(
         pay_cost(state, player, rules::road_cost(), &mut delta);
     }
     state.set_road_owner(edge, player, &mut delta);
+    update_components_on_build_road(board, state, player, edge);
+    update_longest_road_after_build_road(board, state, road_state, player);
+}
+
+pub(crate) fn apply_build_road_kernel(
+    board: &crate::board::Board,
+    state: &mut State,
+    road_state: &mut RoadState,
+    player: PlayerId,
+    edge: EdgeId,
+    free: bool,
+) {
+    if !free {
+        pay_cost_kernel(state, player, rules::road_cost());
+    }
+    state.set_road_owner_kernel(edge, player);
     update_components_on_build_road(board, state, player, edge);
     update_longest_road_after_build_road(board, state, road_state, player);
 }
@@ -705,6 +816,35 @@ pub(crate) fn apply_roll(board: &crate::board::Board, state: &mut State, roll: (
     }
 }
 
+pub(crate) fn apply_roll_kernel(board: &crate::board::Board, state: &mut State, roll: (u32, u32)) {
+    let player = state.turn_player;
+    state.has_rolled[player as usize] = true;
+    let total = (roll.0 + roll.1) as u8;
+
+    if total == 7 {
+        let mut any_discard = false;
+        for idx in 0..PLAYER_COUNT {
+            if player_resource_total(state, idx as u8) > 7 {
+                any_discard = true;
+                break;
+            }
+        }
+        if any_discard {
+            state.active_player = first_discarder(state);
+            state.current_prompt = ActionPrompt::Discard;
+            state.is_discarding = true;
+        } else {
+            state.current_prompt = ActionPrompt::MoveRobber;
+            state.is_moving_robber = true;
+            state.active_player = player;
+        }
+    } else {
+        distribute_resources_kernel(board, state, total);
+        state.current_prompt = ActionPrompt::PlayTurn;
+        state.turn_phase = TurnPhase::Main;
+    }
+}
+
 pub(crate) fn apply_discard(state: &mut State, player: PlayerId, counts: &[u8; RESOURCE_COUNT]) {
     let mut delta = Delta::default();
     for resource in Resource::ALL {
@@ -715,6 +855,31 @@ pub(crate) fn apply_discard(state: &mut State, player: PlayerId, counts: &[u8; R
         }
         state.adjust_resource(player, resource, -(amount as i8), &mut delta);
         state.adjust_bank(resource, amount as i8, &mut delta);
+    }
+
+    if let Some(next) = next_discarder_after(state, state.active_player) {
+        state.active_player = next;
+    } else {
+        state.active_player = state.turn_player;
+        state.current_prompt = ActionPrompt::MoveRobber;
+        state.is_discarding = false;
+        state.is_moving_robber = true;
+    }
+}
+
+pub(crate) fn apply_discard_kernel(
+    state: &mut State,
+    player: PlayerId,
+    counts: &[u8; RESOURCE_COUNT],
+) {
+    for resource in Resource::ALL {
+        let idx = resource.as_index();
+        let amount = counts[idx];
+        if amount == 0 {
+            continue;
+        }
+        state.adjust_resource_kernel(player, resource, -(amount as i8));
+        state.adjust_bank_kernel(resource, amount as i8);
     }
 
     if let Some(next) = next_discarder_after(state, state.active_player) {
@@ -746,6 +911,24 @@ pub(crate) fn apply_move_robber(
     state.turn_phase = TurnPhase::Main;
 }
 
+pub(crate) fn apply_move_robber_kernel(
+    state: &mut State,
+    tile: TileId,
+    victim: Option<PlayerId>,
+    resource: Option<Resource>,
+) {
+    state.move_robber_kernel(tile);
+    if let (Some(victim), Some(resource)) = (victim, resource) {
+        if state.player_resources[victim as usize][resource.as_index()] > 0 {
+            state.adjust_resource_kernel(victim, resource, -1);
+            state.adjust_resource_kernel(state.turn_player, resource, 1);
+        }
+    }
+    state.current_prompt = ActionPrompt::PlayTurn;
+    state.is_moving_robber = false;
+    state.turn_phase = TurnPhase::Main;
+}
+
 pub(crate) fn apply_end_turn(state: &mut State, player: PlayerId) {
     clean_turn(state, player);
     advance_turn(state, 1);
@@ -753,6 +936,7 @@ pub(crate) fn apply_end_turn(state: &mut State, player: PlayerId) {
     state.turn_phase = TurnPhase::Roll;
 }
 
+#[allow(dead_code)]
 fn apply_dev_play(
     board: &crate::board::Board,
     state: &mut State,
@@ -795,6 +979,48 @@ fn apply_dev_play(
     let _ = road_state;
 }
 
+fn apply_dev_play_kernel(
+    board: &crate::board::Board,
+    state: &mut State,
+    road_state: &mut RoadState,
+    army_state: &mut ArmyState,
+    card: DevCard,
+    payload: DevPayload,
+    log: &mut Option<&mut Vec<String>>,
+) {
+    match card {
+        DevCard::YearOfPlenty => {
+            if let DevPayload::YearOfPlenty(first, second) = payload {
+                apply_year_of_plenty_kernel(state, first, second);
+                log_action(
+                    log,
+                    "PLAY_YEAR_OF_PLENTY",
+                    Some(format_year_of_plenty_payload(first, second)),
+                );
+            }
+        }
+        DevCard::Monopoly => {
+            if let DevPayload::Monopoly(resource) = payload {
+                apply_monopoly_kernel(state, resource);
+                log_action(log, "PLAY_MONOPOLY", Some(format_resource(resource)));
+            }
+        }
+        DevCard::Knight => {
+            apply_knight(state, army_state);
+            log_action(log, "PLAY_KNIGHT", None);
+            state.current_prompt = ActionPrompt::MoveRobber;
+            state.is_moving_robber = true;
+        }
+        DevCard::RoadBuilding => {
+            apply_road_building(state);
+            log_action(log, "PLAY_ROAD_BUILDING", None);
+        }
+        DevCard::VictoryPoint => {}
+    }
+    let _ = board;
+    let _ = road_state;
+}
+
 pub(crate) fn apply_year_of_plenty(state: &mut State, first: Resource, second: Option<Resource>) {
     let mut delta = Delta::default();
     if state.bank_resources[first.as_index()] > 0 {
@@ -805,6 +1031,24 @@ pub(crate) fn apply_year_of_plenty(state: &mut State, first: Resource, second: O
         if state.bank_resources[second.as_index()] > 0 {
             state.adjust_resource(state.turn_player, second, 1, &mut delta);
             state.adjust_bank(second, -1, &mut delta);
+        }
+    }
+    mark_dev_played(state, state.turn_player, DevCard::YearOfPlenty);
+}
+
+pub(crate) fn apply_year_of_plenty_kernel(
+    state: &mut State,
+    first: Resource,
+    second: Option<Resource>,
+) {
+    if state.bank_resources[first.as_index()] > 0 {
+        state.adjust_resource_kernel(state.turn_player, first, 1);
+        state.adjust_bank_kernel(first, -1);
+    }
+    if let Some(second) = second {
+        if state.bank_resources[second.as_index()] > 0 {
+            state.adjust_resource_kernel(state.turn_player, second, 1);
+            state.adjust_bank_kernel(second, -1);
         }
     }
     mark_dev_played(state, state.turn_player, DevCard::YearOfPlenty);
@@ -825,6 +1069,24 @@ pub(crate) fn apply_monopoly(state: &mut State, resource: Resource) {
     }
     if total > 0 {
         state.adjust_resource(state.turn_player, resource, total as i8, &mut delta);
+    }
+    mark_dev_played(state, state.turn_player, DevCard::Monopoly);
+}
+
+pub(crate) fn apply_monopoly_kernel(state: &mut State, resource: Resource) {
+    let mut total = 0u8;
+    for other in 0..PLAYER_COUNT {
+        if other as u8 == state.turn_player {
+            continue;
+        }
+        let count = state.player_resources[other][resource.as_index()];
+        if count > 0 {
+            state.adjust_resource_kernel(other as u8, resource, -(count as i8));
+            total += count;
+        }
+    }
+    if total > 0 {
+        state.adjust_resource_kernel(state.turn_player, resource, total as i8);
     }
     mark_dev_played(state, state.turn_player, DevCard::Monopoly);
 }
@@ -932,6 +1194,34 @@ pub(crate) fn apply_confirm_trade(state: &mut State, partner: PlayerId) {
     state.current_prompt = ActionPrompt::PlayTurn;
 }
 
+pub(crate) fn apply_confirm_trade_kernel(state: &mut State, partner: PlayerId) {
+    let mut offer = [0u8; RESOURCE_COUNT];
+    let mut ask = [0u8; RESOURCE_COUNT];
+    offer.copy_from_slice(&state.current_trade[..RESOURCE_COUNT]);
+    ask.copy_from_slice(&state.current_trade[RESOURCE_COUNT..]);
+
+    for (idx, amount) in offer.iter().enumerate() {
+        if *amount == 0 {
+            continue;
+        }
+        let resource = Resource::from_index(idx).unwrap();
+        state.adjust_resource_kernel(state.trade_offering_player, resource, -(*amount as i8));
+        state.adjust_resource_kernel(partner, resource, *amount as i8);
+    }
+    for (idx, amount) in ask.iter().enumerate() {
+        if *amount == 0 {
+            continue;
+        }
+        let resource = Resource::from_index(idx).unwrap();
+        state.adjust_resource_kernel(partner, resource, -(*amount as i8));
+        state.adjust_resource_kernel(state.trade_offering_player, resource, *amount as i8);
+    }
+
+    reset_trade_state(state);
+    state.active_player = state.turn_player;
+    state.current_prompt = ActionPrompt::PlayTurn;
+}
+
 pub(crate) fn apply_cancel_trade(state: &mut State) {
     reset_trade_state(state);
     state.active_player = state.turn_player;
@@ -950,6 +1240,19 @@ pub(crate) fn apply_maritime_trade(
     state.adjust_bank(offer, rate as i8, &mut delta);
     state.adjust_bank(ask, -1, &mut delta);
     state.adjust_resource(player, ask, 1, &mut delta);
+}
+
+pub(crate) fn apply_maritime_trade_kernel(
+    state: &mut State,
+    player: PlayerId,
+    offer: Resource,
+    rate: u8,
+    ask: Resource,
+) {
+    state.adjust_resource_kernel(player, offer, -(rate as i8));
+    state.adjust_bank_kernel(offer, rate as i8);
+    state.adjust_bank_kernel(ask, -1);
+    state.adjust_resource_kernel(player, ask, 1);
 }
 
 fn reset_trade_state(state: &mut State) {
@@ -1492,6 +1795,65 @@ fn distribute_resources(board: &crate::board::Board, state: &mut State, roll: u8
     }
 }
 
+fn distribute_resources_kernel(board: &crate::board::Board, state: &mut State, roll: u8) {
+    let mut total_by_resource = [0u8; RESOURCE_COUNT];
+    let mut payouts = [[0u8; RESOURCE_COUNT]; PLAYER_COUNT];
+
+    for tile_id in 0..board.tile_numbers.len() {
+        if board.tile_numbers[tile_id] != Some(roll) {
+            continue;
+        }
+        if tile_id as u8 == state.robber_tile {
+            continue;
+        }
+        let resource = match board.tile_resources[tile_id] {
+            Some(res) => res,
+            None => continue,
+        };
+        for node in board.tile_nodes[tile_id] {
+            if node == crate::types::INVALID_NODE {
+                continue;
+            }
+            let owner = state.node_owner[node as usize];
+            if owner == crate::types::NO_PLAYER {
+                continue;
+            }
+            let amount = match state.node_level[node as usize] {
+                BuildingLevel::Settlement => 1,
+                BuildingLevel::City => 2,
+                BuildingLevel::Empty => 0,
+            };
+            if amount == 0 {
+                continue;
+            }
+            payouts[owner as usize][resource.as_index()] += amount;
+            total_by_resource[resource.as_index()] += amount;
+        }
+    }
+
+    for (idx, total) in total_by_resource.iter().enumerate() {
+        if *total == 0 {
+            continue;
+        }
+        if state.bank_resources[idx] < *total {
+            for payout in payouts.iter_mut() {
+                payout[idx] = 0;
+            }
+        }
+    }
+
+    for player in 0..PLAYER_COUNT {
+        for (idx, amount) in payouts[player].iter().enumerate() {
+            if *amount == 0 {
+                continue;
+            }
+            let resource = Resource::from_index(idx).unwrap();
+            state.adjust_resource_kernel(player as u8, resource, *amount as i8);
+            state.adjust_bank_kernel(resource, -(*amount as i8));
+        }
+    }
+}
+
 fn pay_cost(state: &mut State, player: PlayerId, cost: &[u8; RESOURCE_COUNT], delta: &mut Delta) {
     for (idx, amount) in cost.iter().enumerate() {
         if *amount == 0 {
@@ -1500,6 +1862,17 @@ fn pay_cost(state: &mut State, player: PlayerId, cost: &[u8; RESOURCE_COUNT], de
         let resource = Resource::from_index(idx).unwrap();
         state.adjust_resource(player, resource, -(*amount as i8), delta);
         state.adjust_bank(resource, *amount as i8, delta);
+    }
+}
+
+fn pay_cost_kernel(state: &mut State, player: PlayerId, cost: &[u8; RESOURCE_COUNT]) {
+    for (idx, amount) in cost.iter().enumerate() {
+        if *amount == 0 {
+            continue;
+        }
+        let resource = Resource::from_index(idx).unwrap();
+        state.adjust_resource_kernel(player, resource, -(*amount as i8));
+        state.adjust_bank_kernel(resource, *amount as i8);
     }
 }
 

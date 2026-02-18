@@ -130,17 +130,17 @@ codex exec \
 
 ### TODO (Agent A - Implementation Owner)
 
-- [ ] Introduce accumulator struct(s) for wins, vps totals, turns, and sample counts
-- [ ] Refactor sequential worker path to update accumulator in-stream
-- [ ] Refactor parallel path to reduce per-thread accumulators
-- [ ] Remove no-longer-needed reducers that depend on `Vec<PlayoutResult>`
-- [ ] Keep `PlayoutSummary` fields/rounding behavior unchanged
+- [x] Introduce accumulator struct(s) for wins, vps totals, turns, and sample counts
+- [x] Refactor sequential worker path to update accumulator in-stream
+- [x] Refactor parallel path to reduce per-thread accumulators
+- [x] Remove no-longer-needed reducers that depend on `Vec<PlayoutResult>`
+- [x] Keep `PlayoutSummary` fields/rounding behavior unchanged
 
 ### TODO (Agent B - Verification Owner)
 
-- [ ] Add/extend tests that compare old/new aggregate math on fixed synthetic results
-- [ ] Run deterministic seed diff script for baseline scenario + `--blue2` + `--orange2` + `--white12`
-- [ ] Confirm CSV schema and row ordering unchanged
+- [x] Add/extend tests that compare old/new aggregate math on fixed synthetic results
+- [x] Run deterministic seed diff script for baseline scenario + `--blue2` + `--orange2` + `--white12`
+- [x] Confirm CSV schema and row ordering unchanged
 
 ## PR2: Forward-Only Apply Path (Simulation Only)
 
@@ -152,16 +152,16 @@ codex exec \
 
 ### TODO (Agent C - Implementation Owner)
 
-- [ ] Add `apply_*_kernel` path(s) for forward-only simulation mutation
-- [ ] Wire `simulate_from_state_with_scratch`/playout path to kernel apply APIs
-- [ ] Preserve existing behavior for prompts/actions and state transitions
-- [ ] Keep old apply APIs intact where reversibility is still needed
+- [x] Add `apply_*_kernel` path(s) for forward-only simulation mutation
+- [x] Wire `simulate_from_state_with_scratch`/playout path to kernel apply APIs
+- [x] Preserve existing behavior for prompts/actions and state transitions
+- [x] Keep old apply APIs intact where reversibility is still needed
 
 ### TODO (Agent D - Verification Owner)
 
-- [ ] Add old-vs-new differential tests for each action prompt class
-- [ ] Add trajectory equivalence tests over fixed seed batches
-- [ ] Validate winner/turn totals remain exact matches
+- [x] Add old-vs-new differential tests for each action prompt class
+- [x] Add trajectory equivalence tests over fixed seed batches
+- [x] Validate winner/turn totals remain exact matches
 
 ## PR3: Clone-Free `decide` Path
 

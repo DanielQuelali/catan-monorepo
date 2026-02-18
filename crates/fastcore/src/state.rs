@@ -100,8 +100,19 @@ impl State {
         self.turn_phase = phase;
     }
 
+    #[inline]
+    pub fn set_turn_kernel(&mut self, player: PlayerId, phase: TurnPhase) {
+        self.turn_player = player;
+        self.turn_phase = phase;
+    }
+
     pub fn move_robber(&mut self, tile: TileId, delta: &mut Delta) {
         delta.record_robber(self.robber_tile);
+        self.robber_tile = tile;
+    }
+
+    #[inline]
+    pub fn move_robber_kernel(&mut self, tile: TileId) {
         self.robber_tile = tile;
     }
 
@@ -109,6 +120,11 @@ impl State {
         let idx = edge as usize;
         delta.record_road(edge, self.edge_owner[idx]);
         self.edge_owner[idx] = owner;
+    }
+
+    #[inline]
+    pub fn set_road_owner_kernel(&mut self, edge: EdgeId, owner: PlayerId) {
+        self.edge_owner[edge as usize] = owner;
     }
 
     pub fn set_building(
@@ -120,6 +136,13 @@ impl State {
     ) {
         let idx = node as usize;
         delta.record_building(node, self.node_owner[idx], self.node_level[idx]);
+        self.node_owner[idx] = owner;
+        self.node_level[idx] = level;
+    }
+
+    #[inline]
+    pub fn set_building_kernel(&mut self, node: NodeId, owner: PlayerId, level: BuildingLevel) {
+        let idx = node as usize;
         self.node_owner[idx] = owner;
         self.node_level[idx] = level;
     }
@@ -140,10 +163,29 @@ impl State {
         self.player_resources[p_idx][r_idx] = updated as u8;
     }
 
+    #[inline]
+    pub fn adjust_resource_kernel(&mut self, player: PlayerId, resource: Resource, amount: i8) {
+        let p_idx = player as usize;
+        let r_idx = resource.as_index();
+        let prev = self.player_resources[p_idx][r_idx];
+        let updated = prev as i16 + amount as i16;
+        debug_assert!(updated >= 0 && updated <= u8::MAX as i16);
+        self.player_resources[p_idx][r_idx] = updated as u8;
+    }
+
     pub fn adjust_bank(&mut self, resource: Resource, amount: i8, delta: &mut Delta) {
         let r_idx = resource.as_index();
         let prev = self.bank_resources[r_idx];
         delta.record_bank(resource, prev);
+        let updated = prev as i16 + amount as i16;
+        debug_assert!(updated >= 0 && updated <= u8::MAX as i16);
+        self.bank_resources[r_idx] = updated as u8;
+    }
+
+    #[inline]
+    pub fn adjust_bank_kernel(&mut self, resource: Resource, amount: i8) {
+        let r_idx = resource.as_index();
+        let prev = self.bank_resources[r_idx];
         let updated = prev as i16 + amount as i16;
         debug_assert!(updated >= 0 && updated <= u8::MAX as i16);
         self.bank_resources[r_idx] = updated as u8;

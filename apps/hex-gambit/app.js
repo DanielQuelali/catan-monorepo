@@ -9,6 +9,7 @@ const HOLDOUT_CSV_BASENAME = "initial_branch_analysis_all_sims_holdout.csv";
 const HEX_SIZE = 44;
 const VIEW_PADDING = 4;
 const SQRT3 = 1.73205080757;
+const FOLLOWER_REVEAL_MS = 980;
 
 const FULL_STEP_FLOW = [
   { key: "s1", type: "settlement", title: "Settlement 1", prompt: "Place Settlement 1." },
@@ -133,10 +134,29 @@ const state = {
   boardResults: [],
   signals: [],
   showMeta: false,
+  resultReveal: null,
   error: null,
 };
 
 let MODEL = null;
+let resultRevealTimer = 0;
+
+function clearResultRevealTimer() {
+  if (resultRevealTimer) {
+    clearTimeout(resultRevealTimer);
+    resultRevealTimer = 0;
+  }
+}
+
+function beginBoardResultReveal(boardIndex) {
+  clearResultRevealTimer();
+  state.resultReveal = { boardIndex, showRates: false };
+  resultRevealTimer = setTimeout(() => {
+    if (state.stage !== "board_result" || state.boardIndex !== boardIndex) return;
+    state.resultReveal = { boardIndex, showRates: true };
+    render();
+  }, FOLLOWER_REVEAL_MS);
+}
 
 function fitPanelToViewport() {
   if (!app || !panelViewport) return;
@@ -206,6 +226,7 @@ function emptySelection() {
 }
 
 function startSession() {
+  clearResultRevealTimer();
   state.stage = "placement";
   state.boardIndex = 0;
   state.stepIndex = 0;
@@ -213,6 +234,7 @@ function startSession() {
   state.boardResults = [];
   state.signals = [];
   state.showMeta = false;
+  state.resultReveal = null;
   render();
 }
 
@@ -356,6 +378,30 @@ function toNumber(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function parseFollowersFromRow(row) {
+  const placements = [];
+  for (let idx = 1; idx <= 4; idx += 1) {
+    const colorRaw = row[`FOLLOWER${idx}_COLOR`];
+    const settlementRaw = row[`FOLLOWER${idx}_SETTLEMENT`];
+    const roadRaw = row[`FOLLOWER${idx}_ROAD`];
+    if (colorRaw === undefined && settlementRaw === undefined && roadRaw === undefined) {
+      break;
+    }
+    const color = String(colorRaw || "").trim().toUpperCase();
+    const settlement = toInt(settlementRaw);
+    const edgeId = roadTokenToEdgeId(roadRaw);
+    if (!color || settlement === null || edgeId === null || !COLOR_CLASS[color]) continue;
+    placements.push({ color, settlement, edgeId });
+  }
+  return placements;
+}
+
+function followerPlacementKey(followers) {
+  return followers
+    .map((placement) => `${placement.color}:${placement.settlement}:${placement.edgeId}`)
+    .join("|");
+}
+
 function selectionMatchesPrefix(entry, prefix) {
   return (
     (prefix.s1 === null || prefix.s1 === entry.s1) &&
@@ -450,51 +496,134 @@ async function fetchAnalysisText(url) {
 function buildBoardAnalysis(csvText) {
   const rows = parseCsv(csvText);
   const aggregates = new Map();
+  const playerColors =
+    rows.length > 0
+      ? Object.keys(rows[0])
+          .filter((header) => header.startsWith("WIN_"))
+          .map((header) => header.slice(4))
+          .filter((color) => COLOR_CLASS[color])
+      : ["RED", "BLUE", "ORANGE", "WHITE"];
 
   for (const row of rows) {
     const s1 = toInt(row.LEADER_SETTLEMENT);
     const e1 = roadTokenToEdgeId(row.LEADER_ROAD);
     const s2 = toInt(row.LEADER_SETTLEMENT2);
     const e2 = roadTokenToEdgeId(row.LEADER_ROAD2);
-    const winPct = toNumber(row.WIN_WHITE);
+    const winPctByColor = {};
+    for (const color of playerColors) {
+      const value = toNumber(row[`WIN_${color}`]);
+      winPctByColor[color] = value;
+    }
     const simsRun = toNumber(row.SIMS_RUN);
+    const followers = parseFollowersFromRow(row);
 
-    if (s1 === null || e1 === null || s2 === null || e2 === null || winPct === null) {
+    if (
+      s1 === null ||
+      e1 === null ||
+      s2 === null ||
+      e2 === null ||
+      winPctByColor.WHITE === null
+    ) {
       continue;
     }
 
     const key = `${s1}|${e1}|${s2}|${e2}`;
-    const agg = aggregates.get(key) || {
-      selection: { s1, e1, s2, e2 },
-      weightedWinPct: 0,
-      weightedSims: 0,
-      unweightedWinPct: 0,
-      unweightedCount: 0,
-    };
+    let agg = aggregates.get(key);
+    if (!agg) {
+      const weightedWinPctByColor = {};
+      const unweightedWinPctByColor = {};
+      for (const color of playerColors) {
+        weightedWinPctByColor[color] = 0;
+        unweightedWinPctByColor[color] = 0;
+      }
+      agg = {
+        selection: { s1, e1, s2, e2 },
+        weightedSims: 0,
+        unweightedCount: 0,
+        weightedWinPctByColor,
+        unweightedWinPctByColor,
+        followerVariants: new Map(),
+      };
+    }
 
     if (simsRun !== null && simsRun > 0) {
-      agg.weightedWinPct += winPct * simsRun;
       agg.weightedSims += simsRun;
+      for (const color of playerColors) {
+        const value = winPctByColor[color];
+        if (value === null) continue;
+        agg.weightedWinPctByColor[color] += value * simsRun;
+      }
     } else {
-      agg.unweightedWinPct += winPct;
       agg.unweightedCount += 1;
+      for (const color of playerColors) {
+        const value = winPctByColor[color];
+        if (value === null) continue;
+        agg.unweightedWinPctByColor[color] += value;
+      }
+    }
+
+    if (followers.length > 0) {
+      const variantKey = followerPlacementKey(followers);
+      const variant = agg.followerVariants.get(variantKey) || {
+        followers,
+        weightedSims: 0,
+        unweightedCount: 0,
+      };
+      if (simsRun !== null && simsRun > 0) variant.weightedSims += simsRun;
+      else variant.unweightedCount += 1;
+      agg.followerVariants.set(variantKey, variant);
     }
     aggregates.set(key, agg);
   }
 
   const entries = [];
   for (const [key, agg] of aggregates.entries()) {
-    const winPct =
-      agg.weightedSims > 0
-        ? agg.weightedWinPct / agg.weightedSims
-        : agg.unweightedCount > 0
-          ? agg.unweightedWinPct / agg.unweightedCount
-          : 0;
+    const winPctByColor = {};
+    for (const color of playerColors) {
+      const value =
+        agg.weightedSims > 0
+          ? agg.weightedWinPctByColor[color] / agg.weightedSims
+          : agg.unweightedCount > 0
+            ? agg.unweightedWinPctByColor[color] / agg.unweightedCount
+            : 0;
+      winPctByColor[color] = value;
+    }
+
+    let followers = [];
+    for (const variant of agg.followerVariants.values()) {
+      if (followers.length === 0) {
+        followers = variant.followers;
+        continue;
+      }
+      const currentKey = followerPlacementKey(followers);
+      const candidateKey = followerPlacementKey(variant.followers);
+      const current = agg.followerVariants.get(currentKey);
+      if (!current) {
+        followers = variant.followers;
+        continue;
+      }
+      if (variant.weightedSims > current.weightedSims) {
+        followers = variant.followers;
+        continue;
+      }
+      if (variant.weightedSims === current.weightedSims) {
+        if (variant.unweightedCount > current.unweightedCount) {
+          followers = variant.followers;
+          continue;
+        }
+        if (variant.unweightedCount === current.unweightedCount && candidateKey < currentKey) {
+          followers = variant.followers;
+        }
+      }
+    }
+
     entries.push({
       key,
       selection: agg.selection,
-      winPct,
+      winPct: winPctByColor.WHITE ?? 0,
+      winPctByColor,
       simsRun: agg.weightedSims,
+      followers,
     });
   }
   if (entries.length === 0) {
@@ -563,7 +692,20 @@ function boardResult(boardIndex, selection) {
     );
   }
   const rank = analysis.rankByKey.get(key) || analysis.total;
-  return { rank, total: analysis.total, winPct: Number(entry.winPct.toFixed(1)) };
+  const winPctByColor = {};
+  for (const [color, value] of Object.entries(entry.winPctByColor || {})) {
+    winPctByColor[color] = Number(value.toFixed(1));
+  }
+  if (winPctByColor.WHITE === undefined) {
+    winPctByColor.WHITE = Number(entry.winPct.toFixed(1));
+  }
+  return {
+    rank,
+    total: analysis.total,
+    winPct: Number((winPctByColor.WHITE ?? entry.winPct).toFixed(1)),
+    winPctByColor,
+    followers: Array.isArray(entry.followers) ? entry.followers : [],
+  };
 }
 
 function signalCounts() {
@@ -600,7 +742,9 @@ function choosePlacement(optionId) {
     try {
       state.boardResults[state.boardIndex] = boardResult(state.boardIndex, selection);
       state.stage = "board_result";
+      beginBoardResultReveal(state.boardIndex);
     } catch (error) {
+      clearResultRevealTimer();
       state.stage = "error";
       state.error = error instanceof Error ? error.message : String(error);
     }
@@ -611,6 +755,8 @@ function choosePlacement(optionId) {
 }
 
 function continueFlow() {
+  clearResultRevealTimer();
+  state.resultReveal = null;
   if (state.boardIndex < MODEL.boards.length - 1) {
     state.boardIndex += 1;
     state.stepIndex = 0;
@@ -682,26 +828,56 @@ function buildPortDock(cornerA, cornerB, portCenter) {
   return planks.length ? { planks } : null;
 }
 
-function renderBoardSvg(boardIndex, step, legalSet, interactive) {
+function renderBoardSvg(boardIndex, step, legalSet, interactive, options = {}) {
   const board = MODEL.boards[boardIndex];
   const selection = state.selections[boardIndex];
   const youColor = MODEL.perspectiveColor;
+  const followers = Array.isArray(options.followers) ? options.followers : [];
+  const animateFollowers = Boolean(options.animateFollowers);
 
-  const placedNodeColorById = new Map();
-  board.basePlacedNodes.forEach((n) => placedNodeColorById.set(n.id, n.color));
-  if (selection.s1 !== null) placedNodeColorById.set(selection.s1, youColor);
-  if (selection.s2 !== null) placedNodeColorById.set(selection.s2, youColor);
+  const placedNodeMetaById = new Map();
+  const setNodePlacement = (id, color, source = "base", delayMs = 0) => {
+    placedNodeMetaById.set(id, { color, source, delayMs });
+  };
+  board.basePlacedNodes.forEach((n) => setNodePlacement(n.id, n.color, "base", 0));
+  if (selection.s1 !== null) setNodePlacement(selection.s1, youColor, "you", 0);
+  if (selection.s2 !== null) setNodePlacement(selection.s2, youColor, "you", 0);
 
-  const placedEdgeColorByKey = new Map();
-  board.basePlacedEdges.forEach((e) => placedEdgeColorByKey.set(edgeKey(e.id[0], e.id[1]), e.color));
+  const placedEdgeMetaByKey = new Map();
+  const setEdgePlacement = (a, b, color, source = "base", delayMs = 0) => {
+    placedEdgeMetaByKey.set(edgeKey(a, b), { color, source, delayMs });
+  };
+  board.basePlacedEdges.forEach((e) => setEdgePlacement(e.id[0], e.id[1], e.color, "base", 0));
   if (selection.e1 !== null) {
     const edge = MODEL.edgesById[selection.e1];
-    placedEdgeColorByKey.set(edgeKey(edge.id[0], edge.id[1]), youColor);
+    setEdgePlacement(edge.id[0], edge.id[1], youColor, "you", 0);
   }
   if (selection.e2 !== null) {
     const edge = MODEL.edgesById[selection.e2];
-    placedEdgeColorByKey.set(edgeKey(edge.id[0], edge.id[1]), youColor);
+    setEdgePlacement(edge.id[0], edge.id[1], youColor, "you", 0);
   }
+  followers.forEach((placement, idx) => {
+    const nodeDelayMs = idx * 180;
+    const edgeDelayMs = idx * 180 + 90;
+    const edge = MODEL.edgesById[placement.edgeId];
+    if (Number.isInteger(placement.settlement)) {
+      setNodePlacement(
+        placement.settlement,
+        placement.color,
+        "follower",
+        animateFollowers ? nodeDelayMs : 0
+      );
+    }
+    if (edge) {
+      setEdgePlacement(
+        edge.id[0],
+        edge.id[1],
+        placement.color,
+        "follower",
+        animateFollowers ? edgeDelayMs : 0
+      );
+    }
+  });
 
   const tiles = [];
   const ports = [];
@@ -784,7 +960,9 @@ function renderBoardSvg(boardIndex, step, legalSet, interactive) {
 
   const renderableNodeIds = new Set(
     MODEL.nodes
-      .filter((node) => MODEL.nodeToLandTileIds[node.id].length > 0 || placedNodeColorById.has(node.id))
+      .filter(
+        (node) => MODEL.nodeToLandTileIds[node.id].length > 0 || placedNodeMetaById.has(node.id)
+      )
       .map((node) => node.id)
   );
 
@@ -792,7 +970,7 @@ function renderBoardSvg(boardIndex, step, legalSet, interactive) {
     MODEL.edges
       .filter((edge) => {
         const key = edgeKey(edge.id[0], edge.id[1]);
-        const isPlaced = placedEdgeColorByKey.has(key);
+        const isPlaced = placedEdgeMetaByKey.has(key);
         const isLegal = interactive && step.type === "road" && legalSet.has(edge.idIndex);
         return edge.landTileCount > 0 || isPlaced || isLegal;
       })
@@ -806,17 +984,25 @@ function renderBoardSvg(boardIndex, step, legalSet, interactive) {
     const b = MODEL.nodesById[edge.id[1]];
     const key = edgeKey(edge.id[0], edge.id[1]);
     const classes = ["board-edge"];
-    const placedColor = placedEdgeColorByKey.get(key);
-    if (placedColor) classes.push("placed", `color-${COLOR_CLASS[placedColor]}`);
+    const placedMeta = placedEdgeMetaByKey.get(key);
+    const placedColor = placedMeta?.color;
+    if (placedColor) classes.push("placed", `color-${COLOR_CLASS[placedColor] || "white"}`);
+    if (placedMeta?.source === "follower") classes.push("follower");
+    if (placedMeta?.source === "follower" && animateFollowers) classes.push("follower-reveal");
     const clickable = interactive && step.type === "road" && legalSet.has(edge.idIndex);
     if (!placedColor && clickable) classes.push("legal", "clickable");
     if (!placedColor && interactive && step.type === "road" && !clickable) classes.push("idle");
+    const inlineStyle =
+      placedMeta?.source === "follower" && animateFollowers && placedMeta.delayMs > 0
+        ? ` style="animation-delay: ${placedMeta.delayMs}ms;"`
+        : "";
     const hitTarget = clickable
       ? `<line class="board-edge-hit" x1="${a.vx}" y1="${a.vy}" x2="${b.vx}" y2="${b.vy}" data-edge-id="${edge.idIndex}" />`
       : "";
     return `
       <line
         class="${classes.join(" ")}"
+        ${inlineStyle}
         x1="${a.vx}" y1="${a.vy}"
         x2="${b.vx}" y2="${b.vy}"
       />
@@ -828,18 +1014,26 @@ function renderBoardSvg(boardIndex, step, legalSet, interactive) {
     .filter((node) => renderableNodeIds.has(node.id))
     .map((node) => {
     const classes = ["board-node"];
-    const placedColor = placedNodeColorById.get(node.id);
-    if (placedColor) classes.push("placed", `color-${COLOR_CLASS[placedColor]}`);
+    const placedMeta = placedNodeMetaById.get(node.id);
+    const placedColor = placedMeta?.color;
+    if (placedColor) classes.push("placed", `color-${COLOR_CLASS[placedColor] || "white"}`);
+    if (placedMeta?.source === "follower") classes.push("follower");
+    if (placedMeta?.source === "follower" && animateFollowers) classes.push("follower-reveal");
     const clickable = interactive && step.type === "settlement" && legalSet.has(node.id);
     if (!placedColor && clickable) classes.push("legal", "clickable");
     if (!placedColor && interactive && step.type === "settlement" && !clickable) classes.push("idle");
     const radius = placedColor ? 13.5 : clickable ? 7 : 4.5;
+    const inlineStyle =
+      placedMeta?.source === "follower" && animateFollowers && placedMeta.delayMs > 0
+        ? ` style="animation-delay: ${placedMeta.delayMs}ms;"`
+        : "";
     const hitTarget = clickable
       ? `<circle class="board-node-hit" cx="${node.vx}" cy="${node.vy}" r="16" data-node-id="${node.id}" />`
       : "";
     return `
       <circle
         class="${classes.join(" ")}"
+        ${inlineStyle}
         cx="${node.vx}" cy="${node.vy}" r="${radius}"
       />
       ${hitTarget}
@@ -847,11 +1041,20 @@ function renderBoardSvg(boardIndex, step, legalSet, interactive) {
     });
 
   const nodeTags = MODEL.nodes
-    .filter((node) => placedNodeColorById.has(node.id) && renderableNodeIds.has(node.id))
+    .filter((node) => placedNodeMetaById.has(node.id) && renderableNodeIds.has(node.id))
     .map((node) => {
-      const color = placedNodeColorById.get(node.id);
+      const placedMeta = placedNodeMetaById.get(node.id);
+      const color = placedMeta?.color;
+      if (!color) return "";
       const short = PLAYER_SHORT[color] || "?";
-      return `<text class="player-tag color-${COLOR_CLASS[color]}" x="${node.vx}" y="${node.vy + 3.5}">${short}</text>`;
+      const classes = ["player-tag", `color-${COLOR_CLASS[color] || "white"}`];
+      if (placedMeta.source === "follower") classes.push("follower");
+      if (placedMeta.source === "follower" && animateFollowers) classes.push("follower-reveal");
+      const style =
+        placedMeta.source === "follower" && animateFollowers && placedMeta.delayMs > 0
+          ? ` style="animation-delay: ${placedMeta.delayMs + 70}ms;"`
+          : "";
+      return `<text class="${classes.join(" ")}"${style} x="${node.vx}" y="${node.vy + 3.5}">${short}</text>`;
     });
 
   const viewBox = MODEL.boardViewBox || { x: 0, y: 0, width: MODEL.width, height: MODEL.height };
@@ -1019,15 +1222,47 @@ function renderBoardResult() {
   const result = state.boardResults[state.boardIndex];
   const step = MODEL.stepFlow[MODEL.stepFlow.length - 1];
   const legalSet = new Set();
+  const reveal = state.resultReveal;
+  const showRates = !reveal || reveal.boardIndex !== state.boardIndex || reveal.showRates;
+  const bars = showRates
+    ? Object.entries(result.winPctByColor || {})
+        .filter(([color]) => COLOR_CLASS[color])
+        .sort(([a], [b]) => {
+          const order = { WHITE: 0, RED: 1, BLUE: 2, ORANGE: 3 };
+          return (order[a] ?? 99) - (order[b] ?? 99);
+        })
+        .map(([color, value]) => {
+          const pct = Number.isFinite(value) ? value : 0;
+          const width = Math.max(0, Math.min(100, pct));
+          return `
+            <div class="tiny-win-row color-${COLOR_CLASS[color]}">
+              <span class="tiny-win-label">${color}</span>
+              <span class="tiny-win-track"><span class="tiny-win-fill color-${COLOR_CLASS[color]}" style="width:${width}%;"></span></span>
+              <span class="tiny-win-value">${pct.toFixed(1)}%</span>
+            </div>
+          `;
+        })
+        .join("")
+    : "";
 
   app.innerHTML = `
     <div class="summary-chip">Board ${state.boardIndex + 1} Result</div>
     <h2 class="card-title">${MODEL.boards[state.boardIndex].label} complete</h2>
     ${renderLegend(true)}
-    <div class="board-wrap">${renderBoardSvg(state.boardIndex, step, legalSet, false)}</div>
+    <div class="board-wrap">${renderBoardSvg(state.boardIndex, step, legalSet, false, {
+      followers: result.followers || [],
+      animateFollowers: !showRates,
+    })}</div>
     <div class="scoreline">
-      <strong>Selected win percentage:</strong> ${result.winPct}%<br/>
-      <strong>Global rank:</strong> ${result.rank} / ${result.total}
+      ${
+        showRates
+          ? `
+            <strong>Win rates (all players):</strong>
+            <div class="tiny-win-bars">${bars}</div>
+            <strong>Global rank:</strong> ${result.rank} / ${result.total}
+          `
+          : `<strong class="result-reveal-note">Followers are placing...</strong>`
+      }
     </div>
     <div class="btn-row">
       <button class="btn btn-primary" id="continue">${

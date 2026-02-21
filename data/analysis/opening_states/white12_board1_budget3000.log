@@ -1,0 +1,3 @@
+Loaded 1 samples from /Users/daniel/Projects/catan-monorepo/data/opening_states/index.json
+[1] sample=0001 state=states/state_0001.json board=boards/board_0001.json
+Completed 1 samples. Outputs under /Users/daniel/Projects/catan-monorepo/data/analysis/opening_states

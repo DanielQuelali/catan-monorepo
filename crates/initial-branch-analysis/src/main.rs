@@ -646,6 +646,24 @@ struct PlacementAction {
     road: (NodeId, NodeId),
 }
 
+#[cfg(feature = "stackelberg_pruning")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct FollowerPlacement {
+    settlement: NodeId,
+    road: (NodeId, NodeId),
+}
+
+#[cfg(feature = "stackelberg_pruning")]
+type White12FollowerTrace = [Option<FollowerPlacement>; 3];
+
+#[cfg(feature = "stackelberg_pruning")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct White12FollowerTraceKey {
+    orange: FollowerPlacement,
+    blue: FollowerPlacement,
+    red: FollowerPlacement,
+}
+
 #[derive(Clone, Debug)]
 struct AllSimsEntry {
     leader_branch_index: usize,
@@ -1223,12 +1241,24 @@ fn simulate_from_state_with_scratch(
     max_turns: u32,
     scratch_state: &mut State,
     players: &[FastValueFunctionPlayer; PLAYER_COUNT],
+    #[cfg(feature = "stackelberg_pruning")] tracked_followers: Option<&[PlayerId; 3]>,
+    #[cfg(feature = "stackelberg_pruning")] follower_trace_out: Option<&mut White12FollowerTrace>,
 ) -> PlayoutResult {
     let mut rng = rng_for_stream(seed, 0);
     scratch_state.clone_from(base_state);
     let mut road_state = base_road;
     let mut army_state = base_army;
     let mut winner = None;
+    #[cfg(feature = "stackelberg_pruning")]
+    let mut follower_settlements: [Option<NodeId>; 3] = [None, None, None];
+    #[cfg(feature = "stackelberg_pruning")]
+    let mut follower_roads: [Option<(NodeId, NodeId)>; 3] = [None, None, None];
+    #[cfg(feature = "stackelberg_pruning")]
+    let mut remaining_follower_actions = if tracked_followers.is_some() {
+        6usize
+    } else {
+        0usize
+    };
 
     loop {
         if scratch_state.num_turns >= max_turns {
@@ -1237,6 +1267,31 @@ fn simulate_from_state_with_scratch(
         let player = scratch_state.active_player as usize;
         let action =
             players[player].decide(board, scratch_state, &road_state, &army_state, &mut rng);
+        #[cfg(feature = "stackelberg_pruning")]
+        if let Some(tracked) = tracked_followers {
+            if let Some(idx) = tracked
+                .iter()
+                .position(|tracked_player| *tracked_player == action.player)
+            {
+                match action.kind {
+                    ValueActionKind::BuildSettlement(node) => {
+                        if follower_settlements[idx].is_none() {
+                            follower_settlements[idx] = Some(node);
+                            remaining_follower_actions =
+                                remaining_follower_actions.saturating_sub(1);
+                        }
+                    }
+                    ValueActionKind::BuildRoad(edge) => {
+                        if follower_roads[idx].is_none() {
+                            follower_roads[idx] = Some(branch_edge(board, edge));
+                            remaining_follower_actions =
+                                remaining_follower_actions.saturating_sub(1);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
         apply_value_action_kernel(
             board,
             scratch_state,
@@ -1253,6 +1308,15 @@ fn simulate_from_state_with_scratch(
 
     let winner = winner.or_else(|| check_winner(scratch_state, &road_state, &army_state));
     let vps_by_player = player_points(scratch_state, &road_state, &army_state);
+    #[cfg(feature = "stackelberg_pruning")]
+    if let Some(out) = follower_trace_out {
+        for idx in 0..3 {
+            out[idx] = match (follower_settlements[idx], follower_roads[idx]) {
+                (Some(settlement), Some(road)) => Some(FollowerPlacement { settlement, road }),
+                _ => None,
+            };
+        }
+    }
     PlayoutResult {
         winner,
         vps_by_player,
@@ -1526,7 +1590,7 @@ fn summarize_with_followers_pruned(
                     seed,
                 });
             }
-            let outcomes = run_sim_tasks(board, &tasks, max_turns);
+            let outcomes = run_sim_tasks(board, &tasks, max_turns, None);
             for outcome in outcomes {
                 let branch = &mut red_tree.branches[outcome.red_idx];
                 branch.stats.update(&outcome.result, responder, None);
@@ -1696,7 +1760,7 @@ fn summarize_with_followers_pruned(
                 });
             }
             offset = (offset + batch) % flat.len();
-            let outcomes = run_sim_tasks(board, &tasks, max_turns);
+            let outcomes = run_sim_tasks(board, &tasks, max_turns, None);
             for outcome in outcomes {
                 let branch =
                     &mut blue_tree.branches[outcome.blue_idx].red_tree.branches[outcome.red_idx];
@@ -1766,7 +1830,7 @@ fn summarize_with_followers_pruned(
                     seed,
                 });
             }
-            let outcomes = run_sim_tasks(board, &tasks, max_turns);
+            let outcomes = run_sim_tasks(board, &tasks, max_turns, None);
             for outcome in outcomes {
                 let branch =
                     &mut blue_tree.branches[outcome.blue_idx].red_tree.branches[outcome.red_idx];
@@ -2120,6 +2184,10 @@ fn run_playouts(
                 max_turns,
                 &mut scratch_state,
                 &players,
+                #[cfg(feature = "stackelberg_pruning")]
+                None,
+                #[cfg(feature = "stackelberg_pruning")]
+                None,
             );
             aggregate.update(&result);
         }
@@ -2146,6 +2214,10 @@ fn run_playouts(
                         max_turns,
                         &mut scratch_state,
                         &players,
+                        #[cfg(feature = "stackelberg_pruning")]
+                        None,
+                        #[cfg(feature = "stackelberg_pruning")]
+                        None,
                     );
                     aggregate.update(&result);
                 }
@@ -2172,6 +2244,10 @@ fn run_playouts(
                 max_turns,
                 &mut scratch_state,
                 &players,
+                #[cfg(feature = "stackelberg_pruning")]
+                None,
+                #[cfg(feature = "stackelberg_pruning")]
+                None,
             );
             aggregate.update(&result);
         }
@@ -2290,6 +2366,123 @@ fn white12_followers_all_colors(setup_followers: &[PlacementAction]) -> Vec<Plac
 }
 
 #[cfg(feature = "stackelberg_pruning")]
+fn white12_tracked_followers(colors: &[String]) -> [PlayerId; 3] {
+    [
+        color_to_player(colors, "ORANGE"),
+        color_to_player(colors, "BLUE"),
+        color_to_player(colors, "RED"),
+    ]
+}
+
+#[cfg(feature = "stackelberg_pruning")]
+fn white12_trace_key(trace: White12FollowerTrace) -> Option<White12FollowerTraceKey> {
+    match (trace[0], trace[1], trace[2]) {
+        (Some(orange), Some(blue), Some(red)) => {
+            Some(White12FollowerTraceKey { orange, blue, red })
+        }
+        _ => None,
+    }
+}
+
+#[cfg(feature = "stackelberg_pruning")]
+fn white12_trace_order_key(
+    key: White12FollowerTraceKey,
+) -> (
+    NodeId,
+    NodeId,
+    NodeId,
+    NodeId,
+    NodeId,
+    NodeId,
+    NodeId,
+    NodeId,
+    NodeId,
+) {
+    (
+        key.orange.settlement,
+        key.orange.road.0,
+        key.orange.road.1,
+        key.blue.settlement,
+        key.blue.road.0,
+        key.blue.road.1,
+        key.red.settlement,
+        key.red.road.0,
+        key.red.road.1,
+    )
+}
+
+#[cfg(feature = "stackelberg_pruning")]
+fn white12_best_trace(
+    counts: &HashMap<White12FollowerTraceKey, u64>,
+) -> Option<White12FollowerTraceKey> {
+    counts
+        .iter()
+        .fold(None, |best, (key, count)| match best {
+            None => Some((*key, *count)),
+            Some((best_key, best_count)) => {
+                if *count > best_count
+                    || (*count == best_count
+                        && white12_trace_order_key(*key) < white12_trace_order_key(best_key))
+                {
+                    Some((*key, *count))
+                } else {
+                    Some((best_key, best_count))
+                }
+            }
+        })
+        .map(|(key, _)| key)
+}
+
+#[cfg(feature = "stackelberg_pruning")]
+fn white12_followers_from_trace_key(key: White12FollowerTraceKey) -> Vec<PlacementAction> {
+    vec![
+        PlacementAction {
+            color: "ORANGE".to_string(),
+            settlement: key.orange.settlement,
+            road: key.orange.road,
+        },
+        PlacementAction {
+            color: "BLUE".to_string(),
+            settlement: key.blue.settlement,
+            road: key.blue.road,
+        },
+        PlacementAction {
+            color: "RED".to_string(),
+            settlement: key.red.settlement,
+            road: key.red.road,
+        },
+    ]
+}
+
+#[cfg(feature = "stackelberg_pruning")]
+fn trace_white12_followers_for_state(
+    board: &fastcore::board::Board,
+    state: &State,
+    road_state: RoadState,
+    army_state: ArmyState,
+    seed: u64,
+    max_turns: u32,
+    tracked_followers: &[PlayerId; 3],
+) -> Option<White12FollowerTraceKey> {
+    let mut scratch_state = state.clone();
+    let players = std::array::from_fn(|_| FastValueFunctionPlayer::new(None, None));
+    let mut trace: White12FollowerTrace = [None, None, None];
+    let _ = simulate_from_state_with_scratch(
+        board,
+        state,
+        road_state,
+        army_state,
+        seed,
+        max_turns,
+        &mut scratch_state,
+        &players,
+        Some(tracked_followers),
+        Some(&mut trace),
+    );
+    white12_trace_key(trace)
+}
+
+#[cfg(feature = "stackelberg_pruning")]
 #[derive(Clone, Debug)]
 struct SimTask {
     blue_idx: usize,
@@ -2306,6 +2499,7 @@ struct SimOutcome {
     blue_idx: usize,
     red_idx: usize,
     result: PlayoutResult,
+    followers: Option<White12FollowerTrace>,
 }
 
 #[cfg(feature = "stackelberg_pruning")]
@@ -2368,6 +2562,7 @@ fn run_sim_tasks(
     board: &fastcore::board::Board,
     tasks: &[SimTask],
     max_turns: u32,
+    tracked_followers: Option<[PlayerId; 3]>,
 ) -> Vec<SimOutcome> {
     if tasks.len() <= 1 {
         let mut scratch_state = tasks
@@ -2377,10 +2572,10 @@ fn run_sim_tasks(
         let players = std::array::from_fn(|_| FastValueFunctionPlayer::new(None, None));
         return tasks
             .iter()
-            .map(|task| SimOutcome {
-                blue_idx: task.blue_idx,
-                red_idx: task.red_idx,
-                result: simulate_from_state_with_scratch(
+            .map(|task| {
+                let mut followers: White12FollowerTrace = [None, None, None];
+                let tracked = tracked_followers.as_ref();
+                let result = simulate_from_state_with_scratch(
                     board,
                     task.state.as_ref(),
                     task.road_state,
@@ -2389,7 +2584,19 @@ fn run_sim_tasks(
                     max_turns,
                     &mut scratch_state,
                     &players,
-                ),
+                    tracked,
+                    if tracked.is_some() {
+                        Some(&mut followers)
+                    } else {
+                        None
+                    },
+                );
+                SimOutcome {
+                    blue_idx: task.blue_idx,
+                    red_idx: task.red_idx,
+                    result,
+                    followers: tracked.map(|_| followers),
+                }
             })
             .collect();
     }
@@ -2408,10 +2615,10 @@ fn run_sim_tasks(
                     let players = std::array::from_fn(|_| FastValueFunctionPlayer::new(None, None));
                     (scratch_state, players)
                 },
-                |(scratch_state, players), task| SimOutcome {
-                    blue_idx: task.blue_idx,
-                    red_idx: task.red_idx,
-                    result: simulate_from_state_with_scratch(
+                |(scratch_state, players), task| {
+                    let mut followers: White12FollowerTrace = [None, None, None];
+                    let tracked = tracked_followers.as_ref();
+                    let result = simulate_from_state_with_scratch(
                         board,
                         task.state.as_ref(),
                         task.road_state,
@@ -2420,7 +2627,19 @@ fn run_sim_tasks(
                         max_turns,
                         scratch_state,
                         players,
-                    ),
+                        tracked,
+                        if tracked.is_some() {
+                            Some(&mut followers)
+                        } else {
+                            None
+                        },
+                    );
+                    SimOutcome {
+                        blue_idx: task.blue_idx,
+                        red_idx: task.red_idx,
+                        result,
+                        followers: tracked.map(|_| followers),
+                    }
                 },
             )
             .collect();
@@ -2435,10 +2654,10 @@ fn run_sim_tasks(
         let players = std::array::from_fn(|_| FastValueFunctionPlayer::new(None, None));
         tasks
             .iter()
-            .map(|task| SimOutcome {
-                blue_idx: task.blue_idx,
-                red_idx: task.red_idx,
-                result: simulate_from_state_with_scratch(
+            .map(|task| {
+                let mut followers: White12FollowerTrace = [None, None, None];
+                let tracked = tracked_followers.as_ref();
+                let result = simulate_from_state_with_scratch(
                     board,
                     task.state.as_ref(),
                     task.road_state,
@@ -2447,7 +2666,19 @@ fn run_sim_tasks(
                     max_turns,
                     &mut scratch_state,
                     &players,
-                ),
+                    tracked,
+                    if tracked.is_some() {
+                        Some(&mut followers)
+                    } else {
+                        None
+                    },
+                );
+                SimOutcome {
+                    blue_idx: task.blue_idx,
+                    red_idx: task.red_idx,
+                    result,
+                    followers: tracked.map(|_| followers),
+                }
             })
             .collect()
     }
@@ -3623,6 +3854,7 @@ fn evaluate_white12_task(
         .cloned()
         .unwrap_or_else(|| player.to_string());
     let setup_followers = white12_setup_followers(board, base_state, colors);
+    let tracked_followers = white12_tracked_followers(colors);
     let roads_a = settlement_road_options(
         board,
         base_state,
@@ -3700,6 +3932,18 @@ fn evaluate_white12_task(
         }
         combo_stats.push(order_stats);
     }
+    let mut combo_follower_counts: Vec<Vec<Vec<HashMap<White12FollowerTraceKey, u64>>>> = orders
+        .iter()
+        .map(|order| {
+            (0..order.first_roads.len())
+                .map(|_| {
+                    (0..order.second_roads.len())
+                        .map(|_| HashMap::new())
+                        .collect()
+                })
+                .collect()
+        })
+        .collect();
 
     let base_seed_l = base_seed ^ (task.branch_index as u64).wrapping_mul(0x9E3779B97F4A7C15);
     let prepared_states: Vec<Vec<Vec<White12PreparedState>>> = orders
@@ -3761,9 +4005,10 @@ fn evaluate_white12_task(
             });
             meta.push((order_idx, road1_idx, road2_idx));
         }
-        let outcomes = run_sim_tasks(board, &tasks, max_turns);
+        let outcomes = run_sim_tasks(board, &tasks, max_turns, Some(tracked_followers));
         for outcome in outcomes {
             let (order_idx, road1_idx, road2_idx) = meta[outcome.blue_idx];
+            let followers = outcome.followers;
             let result = outcome.result;
             pair_stats.update(&result, target_player);
             let order = &mut orders[order_idx];
@@ -3771,9 +4016,41 @@ fn evaluate_white12_task(
             order.first_stats[road1_idx].update(&result, target_player);
             order.second_stats[road2_idx].update(&result, target_player);
             combo_stats[order_idx][road1_idx][road2_idx].update(&result, target_player, None);
+            if let Some(trace) = followers {
+                if let Some(key) = white12_trace_key(trace) {
+                    *combo_follower_counts[order_idx][road1_idx][road2_idx]
+                        .entry(key)
+                        .or_insert(0) += 1;
+                }
+            }
         }
         remaining = remaining.saturating_sub(batch as u64);
     }
+
+    let mut followers_for_combo = |order_idx: usize, road1_idx: usize, road2_idx: usize| {
+        let counts = &combo_follower_counts[order_idx][road1_idx][road2_idx];
+        let mut selected = white12_best_trace(counts);
+        if selected.is_none() {
+            let prepared = &prepared_states[order_idx][road1_idx][road2_idx];
+            let fallback_seed =
+                stackelberg_seed(base_seed_l, order_idx, road1_idx, road2_idx as u64);
+            selected = trace_white12_followers_for_state(
+                board,
+                prepared.state.as_ref(),
+                prepared.road_state,
+                prepared.army_state,
+                fallback_seed,
+                max_turns,
+                &tracked_followers,
+            );
+            if let Some(key) = selected {
+                combo_follower_counts[order_idx][road1_idx][road2_idx].insert(key, 1);
+            }
+        }
+        selected
+            .map(white12_followers_from_trace_key)
+            .unwrap_or_else(|| white12_followers_all_colors(&setup_followers))
+    };
 
     if include_ts_entries {
         for (order_idx, order) in orders.iter().enumerate() {
@@ -3797,7 +4074,7 @@ fn evaluate_white12_task(
                         leader_branch_index: task.branch_index,
                         leader: leader_action,
                         leader_second: Some(leader_second_action),
-                        followers: white12_followers_all_colors(&setup_followers),
+                        followers: followers_for_combo(order_idx, road1_idx, _road2_idx),
                         summary,
                         sims_run: stats.samples,
                         source: "ts".to_string(),
@@ -3839,12 +4116,12 @@ fn evaluate_white12_task(
         summary_from_leaf(chosen_stats, colors, workers)
     };
 
-    if holdout_rerun {
-        for (order_idx, order) in orders.iter().enumerate() {
-            for road1_idx in 0..order.first_roads.len() {
-                for road2_idx in 0..order.second_roads.len() {
+    for (order_idx, order) in orders.iter().enumerate() {
+        for road1_idx in 0..order.first_roads.len() {
+            for road2_idx in 0..order.second_roads.len() {
+                let hold_summary = if holdout_rerun {
                     let prepared = &prepared_states[order_idx][road1_idx][road2_idx];
-                    let hold_summary = summarize_playouts(
+                    summarize_playouts(
                         board,
                         prepared.state.as_ref(),
                         prepared.road_state,
@@ -3853,49 +4130,40 @@ fn evaluate_white12_task(
                         workers,
                         colors,
                         max_turns,
-                    );
-                    let leader_action = PlacementAction {
-                        color: leader_color.clone(),
-                        settlement: order.first_settlement,
-                        road: order.first_roads[road1_idx].edge_nodes,
-                    };
-                    let leader_second_action = PlacementAction {
-                        color: leader_color.clone(),
-                        settlement: order.second_settlement,
-                        road: order.second_roads[road2_idx].edge_nodes,
-                    };
-                    all_sims_entries.push(AllSimsEntry {
-                        leader_branch_index: task.branch_index,
-                        leader: leader_action,
-                        leader_second: Some(leader_second_action),
-                        followers: white12_followers_all_colors(&setup_followers),
-                        summary: hold_summary,
-                        sims_run: seeds.len() as u64,
-                        source: "holdout".to_string(),
-                    });
-                }
+                    )
+                } else {
+                    summary_from_leaf(
+                        &combo_stats[order_idx][road1_idx][road2_idx],
+                        colors,
+                        workers,
+                    )
+                };
+                let leader_action = PlacementAction {
+                    color: leader_color.clone(),
+                    settlement: order.first_settlement,
+                    road: order.first_roads[road1_idx].edge_nodes,
+                };
+                let leader_second_action = PlacementAction {
+                    color: leader_color.clone(),
+                    settlement: order.second_settlement,
+                    road: order.second_roads[road2_idx].edge_nodes,
+                };
+                let sims_run = if holdout_rerun {
+                    seeds.len() as u64
+                } else {
+                    combo_stats[order_idx][road1_idx][road2_idx].samples
+                };
+                all_sims_entries.push(AllSimsEntry {
+                    leader_branch_index: task.branch_index,
+                    leader: leader_action,
+                    leader_second: Some(leader_second_action),
+                    followers: followers_for_combo(order_idx, road1_idx, road2_idx),
+                    summary: hold_summary,
+                    sims_run,
+                    source: "holdout".to_string(),
+                });
             }
         }
-    } else {
-        let leader_action = PlacementAction {
-            color: leader_color.clone(),
-            settlement: best_order.first_settlement,
-            road: best_order.first_roads[best_road1_idx].edge_nodes,
-        };
-        let leader_second_action = PlacementAction {
-            color: leader_color.clone(),
-            settlement: best_order.second_settlement,
-            road: best_order.second_roads[best_road2_idx].edge_nodes,
-        };
-        all_sims_entries.push(AllSimsEntry {
-            leader_branch_index: task.branch_index,
-            leader: leader_action,
-            leader_second: Some(leader_second_action),
-            followers: white12_followers_all_colors(&setup_followers),
-            summary: summary.clone(),
-            sims_run: chosen_stats.samples,
-            source: "holdout".to_string(),
-        });
     }
 
     let (pips_first, pips_second) = if best_order.first_settlement == task.settlement_a {
@@ -4593,6 +4861,22 @@ mod playout_aggregation_tests {
 #[cfg(all(test, feature = "stackelberg_pruning"))]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
+    use std::path::PathBuf;
+
+    fn opening_sample_paths(sample_id: &str) -> (String, String) {
+        let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let state_path = repo_root
+            .join("data/opening_states/states")
+            .join(format!("state_{sample_id}.json"));
+        let board_path = repo_root
+            .join("data/opening_states/boards")
+            .join(format!("board_{sample_id}.json"));
+        (
+            state_path.to_string_lossy().into_owned(),
+            board_path.to_string_lossy().into_owned(),
+        )
+    }
 
     #[test]
     fn stackelberg_seed_deterministic() {
@@ -4628,6 +4912,132 @@ mod tests {
         assert_eq!(stats.wins[1], 1);
         assert_eq!(stats.total_vps[1], 10);
         assert_eq!(stats.total_turns, 30);
+    }
+
+    #[test]
+    fn white12_holdout_entries_cover_all_combinations_for_0001_limit1() {
+        let (state_path, board_path) = opening_sample_paths("0001");
+        let (actions, colors, _current_color) = load_actions(&state_path);
+        let actions = truncate_before_color1(&actions, "WHITE");
+        let board = board_from_json(&board_path).expect("failed to load board fixture");
+        let (base_state, base_road, base_army) =
+            apply_action_history(&board, &actions, &colors, DEFAULT_SEED);
+
+        let white_player = color_to_player(&colors, "WHITE");
+        let tasks = build_white12_tasks(
+            &board,
+            &base_state,
+            base_road,
+            base_army,
+            DEFAULT_SEED,
+            Some(1),
+            None,
+            white_player,
+        );
+        assert_eq!(tasks.len(), 1, "expected exactly one WHITE12 pair task");
+        let task = &tasks[0];
+
+        let roads_a = settlement_road_options(
+            &board,
+            &base_state,
+            base_road,
+            base_army,
+            DEFAULT_SEED,
+            white_player,
+            task.settlement_a,
+        );
+        let roads_b = settlement_road_options(
+            &board,
+            &base_state,
+            base_road,
+            base_army,
+            DEFAULT_SEED,
+            white_player,
+            task.settlement_b,
+        );
+        let expected_combo_count = 2 * roads_a.len() * roads_b.len();
+        assert_eq!(
+            expected_combo_count, 18,
+            "fixture expectation changed: header+all combos should be 19 lines"
+        );
+
+        let stackelberg = StackelbergConfig {
+            budget: 50,
+            alpha0: DEFAULT_ALPHA0,
+            beta0: DEFAULT_BETA0,
+            red_global_prior_weight: DEFAULT_RED_GLOBAL_PRIOR_WEIGHT,
+            rho: DEFAULT_RHO,
+            min_samples: 0,
+            batch_sims: 1,
+        };
+        let result = evaluate_white12_task(
+            &board,
+            &base_state,
+            base_road,
+            base_army,
+            DEFAULT_SEED,
+            task,
+            &[],
+            1,
+            &colors,
+            white_player as usize,
+            200,
+            &stackelberg,
+            false,
+            false,
+        );
+
+        let holdout_entries: Vec<&AllSimsEntry> = result
+            .all_sims_entries
+            .iter()
+            .filter(|entry| entry.source == "holdout")
+            .collect();
+        assert_eq!(holdout_entries.len(), expected_combo_count);
+        assert_eq!(holdout_entries.len() + 1, 19);
+
+        let setup_followers = white12_setup_followers(&board, &base_state, &colors);
+        let setup_orange = setup_followers
+            .iter()
+            .find(|action| action.color == "ORANGE")
+            .map(|action| action.settlement)
+            .expect("expected ORANGE setup placement");
+        let setup_blue = setup_followers
+            .iter()
+            .find(|action| action.color == "BLUE")
+            .map(|action| action.settlement)
+            .expect("expected BLUE setup placement");
+        let setup_red = setup_followers
+            .iter()
+            .find(|action| action.color == "RED")
+            .map(|action| action.settlement)
+            .expect("expected RED setup placement");
+        for entry in &holdout_entries {
+            assert_eq!(entry.followers.len(), 3);
+            assert_eq!(entry.followers[0].color, "ORANGE");
+            assert_eq!(entry.followers[1].color, "BLUE");
+            assert_eq!(entry.followers[2].color, "RED");
+            assert_ne!(entry.followers[0].settlement, setup_orange);
+            assert_ne!(entry.followers[1].settlement, setup_blue);
+            assert_ne!(entry.followers[2].settlement, setup_red);
+        }
+
+        let unique_combos: HashSet<(NodeId, (NodeId, NodeId), NodeId, (NodeId, NodeId))> =
+            holdout_entries
+                .iter()
+                .map(|entry| {
+                    let second = entry
+                        .leader_second
+                        .as_ref()
+                        .expect("WHITE12 rows must include second settlement/road");
+                    (
+                        entry.leader.settlement,
+                        entry.leader.road,
+                        second.settlement,
+                        second.road,
+                    )
+                })
+                .collect();
+        assert_eq!(unique_combos.len(), expected_combo_count);
     }
 }
 

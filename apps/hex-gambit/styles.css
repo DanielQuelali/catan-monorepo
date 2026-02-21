@@ -384,6 +384,24 @@ body {
   stroke-width: 2px;
 }
 
+.hex-token.hot {
+  fill: #ff4f63;
+  stroke: rgba(40, 11, 16, 0.55);
+  stroke-width: 2px;
+  filter: drop-shadow(0 1px 0 rgba(28, 8, 12, 0.28));
+}
+
+.hex-pip {
+  fill: rgba(248, 252, 255, 0.94);
+  stroke: rgba(21, 27, 43, 0.42);
+  stroke-width: 0.55;
+}
+
+.hex-pip.hot {
+  fill: #ff4f63;
+  stroke: rgba(40, 11, 16, 0.55);
+}
+
 .port-label {
   text-anchor: middle;
   dominant-baseline: middle;

@@ -4,6 +4,8 @@ const panelViewport = document.getElementById("panel-viewport");
 let fitRaf = 0;
 
 const BOARD_DATA_URL = "./data/boards.json";
+const ANALYSIS_ROOT_URL = "./data/analysis/opening_states";
+const HOLDOUT_CSV_BASENAME = "initial_branch_analysis_all_sims_holdout.csv";
 const HEX_SIZE = 44;
 const VIEW_PADDING = 4;
 const SQRT3 = 1.73205080757;
@@ -19,19 +21,6 @@ const FULL_STEP_FLOW = [
   },
   { key: "e2", type: "road", title: "Road 2", prompt: "Place Road 2 connected to Settlement 2." },
 ];
-
-const TOKEN_WEIGHT = {
-  2: 1,
-  3: 2,
-  4: 3,
-  5: 4,
-  6: 5,
-  8: 5,
-  9: 4,
-  10: 3,
-  11: 2,
-  12: 1,
-};
 
 const COLOR_CLASS = {
   RED: "red",
@@ -49,6 +38,19 @@ const RESOURCE_COLOR = {
   DESERT: "#9f8c66",
   WATER: "#1a3353",
   PORT: "#245089",
+};
+
+const TOKEN_PIPS = {
+  2: 1,
+  3: 2,
+  4: 3,
+  5: 4,
+  6: 5,
+  8: 5,
+  9: 4,
+  10: 3,
+  11: 2,
+  12: 1,
 };
 
 const SIGNAL_PRECEDENCE = ["rank", "ows", "road"];
@@ -135,7 +137,6 @@ const state = {
 };
 
 let MODEL = null;
-const sequenceRankCache = new Map();
 
 function fitPanelToViewport() {
   if (!app || !panelViewport) return;
@@ -215,40 +216,6 @@ function startSession() {
   render();
 }
 
-function nodeLandTileIds(board, nodeId) {
-  return MODEL.nodeToLandTileIds[nodeId].filter((tileId) => {
-    const tile = board.tiles[tileId];
-    return tile.type === "RESOURCE_TILE" || tile.type === "DESERT";
-  });
-}
-
-function nodeResourceStats(boardIndex, nodeId) {
-  const board = MODEL.boards[boardIndex];
-  const landTileIds = nodeLandTileIds(board, nodeId);
-  let ows = 0;
-  let total = 0;
-  const resources = new Set();
-
-  for (const tileId of landTileIds) {
-    const tile = board.tiles[tileId];
-    if (tile.type === "DESERT") {
-      continue;
-    }
-    const weight = TOKEN_WEIGHT[tile.number] || 0;
-    resources.add(tile.resource);
-    total += weight;
-    if (tile.resource === "ORE" || tile.resource === "WHEAT" || tile.resource === "SHEEP") {
-      ows += weight;
-    }
-  }
-
-  return {
-    ows,
-    total,
-    diversity: resources.size,
-  };
-}
-
 function occupiedNodes(selection, board) {
   const ids = new Set(board.baseOccupiedNodeIds);
   if (selection.s1 !== null) ids.add(selection.s1);
@@ -311,133 +278,8 @@ function legalOptions(boardIndex, selection, step) {
   return [];
 }
 
-function nodeRoadPotential(nodeId, occupiedNodeIds) {
-  const neighbors = MODEL.neighborsByNode[nodeId];
-  let free = 0;
-  for (const n of neighbors) {
-    if (!occupiedNodeIds.has(n)) free += 1;
-  }
-  return free + neighbors.size * 0.25;
-}
-
-function settlementMetrics(boardIndex, nodeId, occupiedNodeIds) {
-  const stats = nodeResourceStats(boardIndex, nodeId);
-  const roadPotential = nodeRoadPotential(nodeId, occupiedNodeIds);
-  return {
-    ows: stats.ows * 2 + stats.total * 0.4,
-    road: roadPotential * 2 + stats.diversity * 0.8,
-    rank: stats.ows * 2.2 + stats.total * 1.15 + stats.diversity * 1.3 + roadPotential * 0.9,
-  };
-}
-
-function roadTarget(edgeId, anchorNodeId) {
-  const [a, b] = MODEL.edgesById[edgeId].id;
-  return a === anchorNodeId ? b : a;
-}
-
-function roadMetrics(boardIndex, edgeId, anchorNodeId, occupiedNodeIds) {
-  const targetNodeId = roadTarget(edgeId, anchorNodeId);
-  const targetStats = nodeResourceStats(boardIndex, targetNodeId);
-  const roadPotential = nodeRoadPotential(targetNodeId, occupiedNodeIds);
-  const edgeHexBonus = MODEL.edgesById[edgeId].landTileCount;
-
-  return {
-    ows: targetStats.ows * 2 + edgeHexBonus * 0.4,
-    road: roadPotential * 2.2 + edgeHexBonus * 0.9,
-    rank:
-      targetStats.ows * 1.6 +
-      targetStats.total * 0.9 +
-      roadPotential * 1.7 +
-      edgeHexBonus * 1.1,
-  };
-}
-
-function optionMetrics(boardIndex, selection, step, optionId) {
-  const board = MODEL.boards[boardIndex];
-  const occupiedNodeIds = occupiedNodes(selection, board);
-
-  if (step.type === "settlement") {
-    return settlementMetrics(boardIndex, optionId, occupiedNodeIds);
-  }
-
-  const anchor = step.key === "e1" ? selection.s1 : selection.s2;
-  if (anchor === null) return { ows: 0, road: 0, rank: 0 };
-  return roadMetrics(boardIndex, optionId, anchor, occupiedNodeIds);
-}
-
-function normalize(value, min, max) {
-  if (max <= min) return 1;
-  return (value - min) / (max - min);
-}
-
-function inferSignal(boardIndex, selection, step, legal, chosen) {
-  const scored = legal.map((optionId) => ({
-    optionId,
-    metrics: optionMetrics(boardIndex, selection, step, optionId),
-  }));
-  const chosenEntry = scored.find((entry) => entry.optionId === chosen);
-  if (!chosenEntry) return "rank";
-
-  const mins = { ows: Infinity, road: Infinity, rank: Infinity };
-  const maxs = { ows: -Infinity, road: -Infinity, rank: -Infinity };
-  for (const entry of scored) {
-    mins.ows = Math.min(mins.ows, entry.metrics.ows);
-    mins.road = Math.min(mins.road, entry.metrics.road);
-    mins.rank = Math.min(mins.rank, entry.metrics.rank);
-    maxs.ows = Math.max(maxs.ows, entry.metrics.ows);
-    maxs.road = Math.max(maxs.road, entry.metrics.road);
-    maxs.rank = Math.max(maxs.rank, entry.metrics.rank);
-  }
-
-  const normalized = {
-    ows: normalize(chosenEntry.metrics.ows, mins.ows, maxs.ows),
-    road: normalize(chosenEntry.metrics.road, mins.road, maxs.road),
-    rank: normalize(chosenEntry.metrics.rank, mins.rank, maxs.rank),
-  };
-
-  let winner = SIGNAL_PRECEDENCE[0];
-  for (const signal of SIGNAL_PRECEDENCE) {
-    if (normalized[signal] > normalized[winner]) winner = signal;
-  }
-  return winner;
-}
-
 function sequenceKey(selection) {
   return `${selection.s1}|${selection.e1}|${selection.s2}|${selection.e2}`;
-}
-
-function sequenceScore(boardIndex, selection) {
-  if (selection.s1 === null || selection.e1 === null || selection.s2 === null || selection.e2 === null) {
-    return -Infinity;
-  }
-
-  const board = MODEL.boards[boardIndex];
-  const baseOccupied = new Set(board.baseOccupiedNodeIds);
-  const occupiedS1 = new Set(baseOccupied);
-  occupiedS1.add(selection.s1);
-  const occupiedBoth = new Set(occupiedS1);
-  occupiedBoth.add(selection.s2);
-
-  const s1 = settlementMetrics(boardIndex, selection.s1, baseOccupied);
-  const r1 = roadMetrics(boardIndex, selection.e1, selection.s1, occupiedS1);
-  const s2 = settlementMetrics(boardIndex, selection.s2, occupiedS1);
-  const r2 = roadMetrics(boardIndex, selection.e2, selection.s2, occupiedBoth);
-
-  const stats1 = nodeResourceStats(boardIndex, selection.s1);
-  const stats2 = nodeResourceStats(boardIndex, selection.s2);
-  const n1 = MODEL.nodesById[selection.s1];
-  const n2 = MODEL.nodesById[selection.s2];
-  const spread = Math.hypot(n1.x - n2.x, n1.y - n2.y) / HEX_SIZE;
-
-  return (
-    s1.rank * 1.0 +
-    r1.rank * 0.7 +
-    s2.rank * 1.1 +
-    r2.rank * 0.8 +
-    (stats1.ows + stats2.ows) * 1.5 +
-    (stats1.diversity + stats2.diversity) * 0.6 +
-    spread * 0.6
-  );
 }
 
 function compareTuple(a, b) {
@@ -447,60 +289,281 @@ function compareTuple(a, b) {
   return a.e2 - b.e2;
 }
 
-function buildRankCache(boardIndex) {
-  if (sequenceRankCache.has(boardIndex)) return sequenceRankCache.get(boardIndex);
+function splitCsvLine(line) {
+  const out = [];
+  let cur = "";
+  let inQuotes = false;
 
-  const sequences = [];
-  const stepFlow = MODEL.stepFlow;
-  const seed = { ...MODEL.boards[boardIndex].seedSelection };
-
-  function dfs(stepIndex, selection) {
-    if (stepIndex >= stepFlow.length) {
-      sequences.push({
-        selection: { ...selection },
-        key: sequenceKey(selection),
-        score: sequenceScore(boardIndex, selection),
-      });
-      return;
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    if (ch === "\"") {
+      if (inQuotes && line[i + 1] === "\"") {
+        cur += "\"";
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
     }
-
-    const step = stepFlow[stepIndex];
-    if (selection[step.key] !== null) {
-      dfs(stepIndex + 1, selection);
-      return;
+    if (ch === "," && !inQuotes) {
+      out.push(cur);
+      cur = "";
+      continue;
     }
+    cur += ch;
+  }
+  out.push(cur);
+  return out;
+}
 
-    const options = legalOptions(boardIndex, selection, step);
-    for (const optionId of options) {
-      const next = { ...selection, [step.key]: optionId };
-      dfs(stepIndex + 1, next);
+function parseCsv(text) {
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  if (lines.length < 2) {
+    throw new Error("analysis CSV is empty");
+  }
+  const headers = splitCsvLine(lines[0]);
+  return lines.slice(1).map((line) => {
+    const cells = splitCsvLine(line);
+    const row = {};
+    for (let idx = 0; idx < headers.length; idx += 1) {
+      row[headers[idx]] = cells[idx] ?? "";
+    }
+    return row;
+  });
+}
+
+function roadTokenToEdgeId(token) {
+  const parts = String(token || "")
+    .split("-")
+    .map((value) => Number(value));
+  if (parts.length !== 2 || !Number.isFinite(parts[0]) || !Number.isFinite(parts[1])) {
+    return null;
+  }
+  const edgeId = MODEL.edgeIdByKey.get(edgeKey(parts[0], parts[1]));
+  return edgeId === undefined ? null : edgeId;
+}
+
+function toInt(value) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) ? parsed : null;
+}
+
+function toNumber(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function selectionMatchesPrefix(entry, prefix) {
+  return (
+    (prefix.s1 === null || prefix.s1 === entry.s1) &&
+    (prefix.e1 === null || prefix.e1 === entry.e1) &&
+    (prefix.s2 === null || prefix.s2 === entry.s2) &&
+    (prefix.e2 === null || prefix.e2 === entry.e2)
+  );
+}
+
+function bestContinuationWinPct(analysis, prefix) {
+  let best = -Infinity;
+  for (const entry of analysis.entries) {
+    if (!selectionMatchesPrefix(entry.selection, prefix)) continue;
+    if (entry.winPct > best) best = entry.winPct;
+  }
+  return best;
+}
+
+function bestOptionByContinuationWin(boardIndex, selection, step, legal) {
+  const analysis = MODEL.boards[boardIndex].analysis;
+  if (!analysis) return null;
+
+  let bestOption = null;
+  let bestWin = -Infinity;
+  for (const optionId of legal) {
+    const candidate = { ...selection, [step.key]: optionId };
+    const win = bestContinuationWinPct(analysis, candidate);
+    if (win > bestWin || (win === bestWin && (bestOption === null || optionId < bestOption))) {
+      bestOption = optionId;
+      bestWin = win;
     }
   }
+  return bestOption;
+}
 
-  dfs(0, seed);
+function followsTopPrefix(boardIndex, selection, step, chosen) {
+  const top = MODEL.boards[boardIndex].analysis?.topSelection;
+  if (!top) return false;
 
-  sequences.sort((a, b) => {
-    if (b.score !== a.score) return b.score - a.score;
+  for (const flowStep of MODEL.stepFlow) {
+    const key = flowStep.key;
+    const value = key === step.key ? chosen : selection[key];
+    if (value === null || value === undefined) break;
+    if (value !== top[key]) return false;
+    if (key === step.key) return true;
+  }
+  return false;
+}
+
+function inferSignal(boardIndex, selection, step, legal, chosen) {
+  if (followsTopPrefix(boardIndex, selection, step, chosen)) return "rank";
+
+  const bestOption = bestOptionByContinuationWin(boardIndex, selection, step, legal);
+  if (bestOption === chosen) {
+    return step.type === "road" ? "road" : "ows";
+  }
+  return step.type === "road" ? "road" : "ows";
+}
+
+function analysisCandidates(board) {
+  if (typeof board.analysisPath === "string" && board.analysisPath.length > 0) {
+    const base =
+      board.analysisPath.endsWith(".csv") || board.analysisPath.endsWith(".csv.gz")
+        ? board.analysisPath
+        : `${board.analysisPath.replace(/\/$/, "")}/${HOLDOUT_CSV_BASENAME}`;
+    if (base.endsWith(".csv.gz")) return [base, base.slice(0, -3)];
+    if (base.endsWith(".csv")) return [`${base}.gz`, base];
+    return [`${base}.gz`, base];
+  }
+
+  const analysisId = String(board.analysisId || "").trim();
+  if (!analysisId) return [];
+  const root = String(board.analysisRoot || ANALYSIS_ROOT_URL).replace(/\/$/, "");
+  const base = `${root}/${analysisId}/${HOLDOUT_CSV_BASENAME}`;
+  return [`${base}.gz`, base];
+}
+
+async function fetchAnalysisText(url) {
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+  if (!url.endsWith(".gz")) {
+    return response.text();
+  }
+  if (typeof DecompressionStream === "undefined" || !response.body) {
+    throw new Error("gzip unsupported");
+  }
+  const ds = new DecompressionStream("gzip");
+  return new Response(response.body.pipeThrough(ds)).text();
+}
+
+function buildBoardAnalysis(csvText) {
+  const rows = parseCsv(csvText);
+  const aggregates = new Map();
+
+  for (const row of rows) {
+    const s1 = toInt(row.LEADER_SETTLEMENT);
+    const e1 = roadTokenToEdgeId(row.LEADER_ROAD);
+    const s2 = toInt(row.LEADER_SETTLEMENT2);
+    const e2 = roadTokenToEdgeId(row.LEADER_ROAD2);
+    const winPct = toNumber(row.WIN_WHITE);
+    const simsRun = toNumber(row.SIMS_RUN);
+
+    if (s1 === null || e1 === null || s2 === null || e2 === null || winPct === null) {
+      continue;
+    }
+
+    const key = `${s1}|${e1}|${s2}|${e2}`;
+    const agg = aggregates.get(key) || {
+      selection: { s1, e1, s2, e2 },
+      weightedWinPct: 0,
+      weightedSims: 0,
+      unweightedWinPct: 0,
+      unweightedCount: 0,
+    };
+
+    if (simsRun !== null && simsRun > 0) {
+      agg.weightedWinPct += winPct * simsRun;
+      agg.weightedSims += simsRun;
+    } else {
+      agg.unweightedWinPct += winPct;
+      agg.unweightedCount += 1;
+    }
+    aggregates.set(key, agg);
+  }
+
+  const entries = [];
+  for (const [key, agg] of aggregates.entries()) {
+    const winPct =
+      agg.weightedSims > 0
+        ? agg.weightedWinPct / agg.weightedSims
+        : agg.unweightedCount > 0
+          ? agg.unweightedWinPct / agg.unweightedCount
+          : 0;
+    entries.push({
+      key,
+      selection: agg.selection,
+      winPct,
+      simsRun: agg.weightedSims,
+    });
+  }
+  if (entries.length === 0) {
+    throw new Error("analysis CSV had no usable WHITE12 rows");
+  }
+
+  entries.sort((a, b) => {
+    if (b.winPct !== a.winPct) return b.winPct - a.winPct;
     return compareTuple(a.selection, b.selection);
   });
 
   const rankByKey = new Map();
-  sequences.forEach((entry, index) => {
-    rankByKey.set(entry.key, index + 1);
+  const entryByKey = new Map();
+  entries.forEach((entry, idx) => {
+    rankByKey.set(entry.key, idx + 1);
+    entryByKey.set(entry.key, entry);
   });
 
-  const cache = { rankByKey, total: sequences.length };
-  sequenceRankCache.set(boardIndex, cache);
-  return cache;
+  return {
+    entries,
+    rankByKey,
+    entryByKey,
+    total: entries.length,
+    topSelection: entries[0].selection,
+  };
+}
+
+async function loadBoardAnalysis(board) {
+  const candidates = analysisCandidates(board);
+  if (candidates.length === 0) {
+    throw new Error(`board ${board.id} has no analysis source configured`);
+  }
+
+  let lastError = "unknown";
+  for (const candidate of candidates) {
+    try {
+      const csvText = await fetchAnalysisText(candidate);
+      return buildBoardAnalysis(csvText);
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  throw new Error(
+    `failed to load analysis for board ${board.id}; tried ${candidates.join(", ")}; last error: ${lastError}`
+  );
+}
+
+async function hydrateBoardAnalyses() {
+  for (const board of MODEL.boards) {
+    board.analysis = await loadBoardAnalysis(board);
+  }
 }
 
 function boardResult(boardIndex, selection) {
-  const cache = buildRankCache(boardIndex);
-  if (cache.total === 0) return { rank: 1, total: 1, winPct: 0 };
-  const rank = cache.rankByKey.get(sequenceKey(selection)) || cache.total;
-  const percentile = 1 - (rank - 1) / Math.max(1, cache.total - 1);
-  const winPct = Number((32 + percentile * 36).toFixed(1));
-  return { rank, total: cache.total, winPct };
+  const board = MODEL.boards[boardIndex];
+  const analysis = board.analysis;
+  if (!analysis) {
+    throw new Error("analysis data unavailable for board result");
+  }
+  const key = sequenceKey(selection);
+  const entry = analysis.entryByKey.get(key);
+  if (!entry) {
+    throw new Error(
+      `Missing analysis result for board ${board.id} sequence ${key}. Refusing to show default 0%.`
+    );
+  }
+  const rank = analysis.rankByKey.get(key) || analysis.total;
+  return { rank, total: analysis.total, winPct: Number(entry.winPct.toFixed(1)) };
 }
 
 function signalCounts() {
@@ -534,8 +597,13 @@ function choosePlacement(optionId) {
   state.stepIndex += 1;
 
   if (state.stepIndex >= MODEL.stepFlow.length) {
-    state.boardResults[state.boardIndex] = boardResult(state.boardIndex, selection);
-    state.stage = "board_result";
+    try {
+      state.boardResults[state.boardIndex] = boardResult(state.boardIndex, selection);
+      state.stage = "board_result";
+    } catch (error) {
+      state.stage = "error";
+      state.error = error instanceof Error ? error.message : String(error);
+    }
   } else {
     state.stage = "placement";
   }
@@ -685,10 +753,27 @@ function renderBoardSvg(boardIndex, step, legalSet, interactive) {
       tile.type === "DESERT"
         ? RESOURCE_COLOR.DESERT
         : RESOURCE_COLOR[tile.resource];
-    const token =
-      tile.type === "RESOURCE_TILE" && tile.number
-        ? `<text class="hex-token" x="${tileGeom.vcx}" y="${tileGeom.vcy + 5}">${tile.number}</text>`
-        : "";
+    let token = "";
+    if (tile.type === "RESOURCE_TILE" && tile.number) {
+      const number = Number(tile.number);
+      const hotToken = number === 6 || number === 8;
+      const tokenClass = `hex-token${hotToken ? " hot" : ""}`;
+      const pipCount = TOKEN_PIPS[number] || 0;
+      const pipSpacing = 4.3;
+      const pipStart = tileGeom.vcx - ((pipCount - 1) * pipSpacing) / 2;
+      const pipY = tileGeom.vcy + 13.8;
+      const pipClass = `hex-pip${hotToken ? " hot" : ""}`;
+      const pips = Array.from({ length: pipCount }, (_, idx) => {
+        const x = pipStart + idx * pipSpacing;
+        return `<circle class="${pipClass}" cx="${x}" cy="${pipY}" r="1.5" />`;
+      }).join("");
+      token = `
+        <g class="hex-token-wrap">
+          <text class="${tokenClass}" x="${tileGeom.vcx}" y="${tileGeom.vcy + 5}">${tile.number}</text>
+          ${pips}
+        </g>
+      `;
+    }
     tiles.push(`
       <g class="hex-cell">
         <polygon points="${tileGeom.vpoints}" fill="${fill}" />
@@ -860,9 +945,14 @@ function renderLoading() {
 function renderError() {
   app.innerHTML = `
     <h1 class="brand">Hex Gambit</h1>
-    <p class="lead">Failed to load board data.</p>
+    <p class="lead">Hex Gambit encountered a data error.</p>
     <div class="inline-note">${state.error || "Unknown error"}</div>
+    <div class="btn-row">
+      <button class="btn btn-primary" id="restart">Restart Session</button>
+    </div>
   `;
+  const restartBtn = app.querySelector("#restart");
+  if (restartBtn) restartBtn.addEventListener("click", startSession);
 }
 
 function renderIntro() {
@@ -1039,7 +1129,7 @@ function buildModel(payload) {
       .filter((step) => Boolean(step))
       .map((step) => ({ ...step })) || [];
   const activeStepFlow = stepFlow.length > 0 ? stepFlow : FULL_STEP_FLOW.map((step) => ({ ...step }));
-  const boards = payload.boards.map((board) => {
+  const boards = payload.boards.map((board, boardIndex) => {
     const normalizedTiles = board.tiles.map((entry) => {
       const tile = entry.tile;
       if (tile.type === "RESOURCE_TILE") {
@@ -1089,6 +1179,20 @@ function buildModel(payload) {
     return {
       id: board.id,
       label: board.label,
+      analysisId:
+        (typeof board.analysis_id === "string" && board.analysis_id) ||
+        (typeof board.analysisId === "string" && board.analysisId) ||
+        String(boardIndex + 1).padStart(4, "0"),
+      analysisPath:
+        (typeof board.analysis_path === "string" && board.analysis_path) ||
+        (typeof board.analysisPath === "string" && board.analysisPath) ||
+        null,
+      analysisRoot:
+        (typeof board.analysis_root === "string" && board.analysis_root) ||
+        (typeof board.analysisRoot === "string" && board.analysisRoot) ||
+        null,
+      analysis: null,
+      seedSelection: board.seedSelection || null,
       tiles: normalizedTiles,
       basePlacedNodes,
       basePlacedEdges,
@@ -1339,6 +1443,7 @@ function buildModel(payload) {
     edges,
     nodesById,
     edgesById,
+    edgeIdByKey,
     neighborsByNode,
     edgeIdsByNode,
     nodeToLandTileIds,
@@ -1358,7 +1463,7 @@ async function loadBoards() {
     }
     const payload = await response.json();
     MODEL = buildModel(payload);
-    sequenceRankCache.clear();
+    await hydrateBoardAnalyses();
     state.selections = MODEL.boards.map((board) => ({ ...board.seedSelection }));
     state.stage = "intro";
     state.error = null;

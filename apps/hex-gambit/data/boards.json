@@ -1,7 +1,7 @@
 {
   "meta": {
-    "sourceState": "data/state_pre_last_settlement.json",
-    "sourceBoardExample": "data/board_example.json",
+    "sourceState": "data/opening_states/states/state_0001.json",
+    "sourceBoardExample": "data/opening_states/boards/board_0001.json",
     "perspectiveColor": "WHITE",
     "currentColor": "WHITE",
     "currentPrompt": "BUILD_INITIAL_SETTLEMENT",
@@ -17,7 +17,7 @@
       "Settlement 2",
       "Road 2"
     ],
-    "preludeDescription": "RED, BLUE, ORANGE first settlement+road already placed. WHITE evaluates both placements."
+    "preludeDescription": "RED, BLUE, ORANGE first settlement+road are pre-placed from opening-state fixtures; WHITE evaluates both placements."
   },
   "boardModel": {
     "nodes": [
@@ -2475,8 +2475,9 @@
   },
   "boards": [
     {
-      "id": "snapshot-board",
-      "label": "Snapshot Board",
+      "id": "0001",
+      "label": "Opening Board 0001",
+      "analysis_id": "0001",
       "tiles": [
         {
           "coordinate": [
@@ -2487,7 +2488,7 @@
           "tile": {
             "id": 0,
             "type": "RESOURCE_TILE",
-            "resource": "WOOD",
+            "resource": "BRICK",
             "number": 11
           }
         },
@@ -2500,8 +2501,8 @@
           "tile": {
             "id": 1,
             "type": "RESOURCE_TILE",
-            "resource": "WOOD",
-            "number": 9
+            "resource": "SHEEP",
+            "number": 4
           }
         },
         {
@@ -2514,7 +2515,7 @@
             "id": 2,
             "type": "RESOURCE_TILE",
             "resource": "BRICK",
-            "number": 3
+            "number": 5
           }
         },
         {
@@ -2526,7 +2527,7 @@
           "tile": {
             "id": 3,
             "type": "RESOURCE_TILE",
-            "resource": "BRICK",
+            "resource": "SHEEP",
             "number": 6
           }
         },
@@ -2539,8 +2540,8 @@
           "tile": {
             "id": 4,
             "type": "RESOURCE_TILE",
-            "resource": "ORE",
-            "number": 5
+            "resource": "WHEAT",
+            "number": 3
           }
         },
         {
@@ -2552,8 +2553,8 @@
           "tile": {
             "id": 5,
             "type": "RESOURCE_TILE",
-            "resource": "WOOD",
-            "number": 4
+            "resource": "WHEAT",
+            "number": 10
           }
         },
         {
@@ -2564,7 +2565,9 @@
           ],
           "tile": {
             "id": 6,
-            "type": "DESERT"
+            "type": "RESOURCE_TILE",
+            "resource": "WOOD",
+            "number": 9
           }
         },
         {
@@ -2576,8 +2579,8 @@
           "tile": {
             "id": 7,
             "type": "RESOURCE_TILE",
-            "resource": "SHEEP",
-            "number": 5
+            "resource": "WOOD",
+            "number": 8
           }
         },
         {
@@ -2589,7 +2592,7 @@
           "tile": {
             "id": 8,
             "type": "RESOURCE_TILE",
-            "resource": "WHEAT",
+            "resource": "WOOD",
             "number": 10
           }
         },
@@ -2602,8 +2605,8 @@
           "tile": {
             "id": 9,
             "type": "RESOURCE_TILE",
-            "resource": "SHEEP",
-            "number": 8
+            "resource": "WHEAT",
+            "number": 9
           }
         },
         {
@@ -2616,7 +2619,7 @@
             "id": 10,
             "type": "RESOURCE_TILE",
             "resource": "SHEEP",
-            "number": 4
+            "number": 12
           }
         },
         {
@@ -2628,7 +2631,7 @@
           "tile": {
             "id": 11,
             "type": "RESOURCE_TILE",
-            "resource": "SHEEP",
+            "resource": "ORE",
             "number": 11
           }
         },
@@ -2641,8 +2644,8 @@
           "tile": {
             "id": 12,
             "type": "RESOURCE_TILE",
-            "resource": "ORE",
-            "number": 12
+            "resource": "WHEAT",
+            "number": 4
           }
         },
         {
@@ -2654,8 +2657,8 @@
           "tile": {
             "id": 13,
             "type": "RESOURCE_TILE",
-            "resource": "ORE",
-            "number": 9
+            "resource": "BRICK",
+            "number": 8
           }
         },
         {
@@ -2666,9 +2669,7 @@
           ],
           "tile": {
             "id": 14,
-            "type": "RESOURCE_TILE",
-            "resource": "WHEAT",
-            "number": 10
+            "type": "DESERT"
           }
         },
         {
@@ -2680,8 +2681,8 @@
           "tile": {
             "id": 15,
             "type": "RESOURCE_TILE",
-            "resource": "WHEAT",
-            "number": 8
+            "resource": "ORE",
+            "number": 5
           }
         },
         {
@@ -2693,8 +2694,8 @@
           "tile": {
             "id": 16,
             "type": "RESOURCE_TILE",
-            "resource": "WHEAT",
-            "number": 3
+            "resource": "SHEEP",
+            "number": 2
           }
         },
         {
@@ -2706,7 +2707,7 @@
           "tile": {
             "id": 17,
             "type": "RESOURCE_TILE",
-            "resource": "WOOD",
+            "resource": "ORE",
             "number": 6
           }
         },
@@ -2719,8 +2720,8 @@
           "tile": {
             "id": 18,
             "type": "RESOURCE_TILE",
-            "resource": "BRICK",
-            "number": 2
+            "resource": "WOOD",
+            "number": 3
           }
         },
         {
@@ -2756,7 +2757,7 @@
             "id": 1,
             "type": "PORT",
             "direction": "NORTHWEST",
-            "resource": "SHEEP"
+            "resource": null
           }
         },
         {
@@ -2779,7 +2780,7 @@
             "id": 2,
             "type": "PORT",
             "direction": "NORTHWEST",
-            "resource": null
+            "resource": "ORE"
           }
         },
         {
@@ -2802,7 +2803,7 @@
             "id": 3,
             "type": "PORT",
             "direction": "NORTHEAST",
-            "resource": null
+            "resource": "WHEAT"
           }
         },
         {
@@ -2825,7 +2826,7 @@
             "id": 4,
             "type": "PORT",
             "direction": "EAST",
-            "resource": "BRICK"
+            "resource": "SHEEP"
           }
         },
         {
@@ -2894,7 +2895,7 @@
             "id": 7,
             "type": "PORT",
             "direction": "SOUTHWEST",
-            "resource": "WHEAT"
+            "resource": "BRICK"
           }
         },
         {
@@ -2917,7 +2918,7 @@
             "id": 8,
             "type": "PORT",
             "direction": "SOUTHWEST",
-            "resource": "ORE"
+            "resource": null
           }
         },
         {
@@ -2933,17 +2934,17 @@
       ],
       "basePlacedNodes": [
         {
-          "id": 18,
+          "id": 10,
           "color": "RED",
           "building": "SETTLEMENT"
         },
         {
-          "id": 8,
+          "id": 22,
           "color": "BLUE",
           "building": "SETTLEMENT"
         },
         {
-          "id": 4,
+          "id": 14,
           "color": "ORANGE",
           "building": "SETTLEMENT"
         }
@@ -2951,30 +2952,31 @@
       "basePlacedEdges": [
         {
           "id": [
-            18,
-            40
+            9,
+            10
           ],
           "color": "RED"
         },
         {
           "id": [
-            8,
-            27
+            20,
+            22
           ],
           "color": "BLUE"
         },
         {
           "id": [
-            3,
-            4
+            14,
+            15
           ],
           "color": "ORANGE"
         }
       ]
     },
     {
-      "id": "example-board",
-      "label": "Example Board",
+      "id": "0002",
+      "label": "Opening Board 0002",
+      "analysis_id": "0002",
       "tiles": [
         {
           "coordinate": [
@@ -2985,7 +2987,7 @@
           "tile": {
             "id": 0,
             "type": "RESOURCE_TILE",
-            "resource": "WOOD",
+            "resource": "WHEAT",
             "number": 11
           }
         },
@@ -2998,8 +3000,8 @@
           "tile": {
             "id": 1,
             "type": "RESOURCE_TILE",
-            "resource": "WOOD",
-            "number": 9
+            "resource": "SHEEP",
+            "number": 5
           }
         },
         {
@@ -3011,8 +3013,8 @@
           "tile": {
             "id": 2,
             "type": "RESOURCE_TILE",
-            "resource": "BRICK",
-            "number": 3
+            "resource": "WHEAT",
+            "number": 6
           }
         },
         {
@@ -3023,9 +3025,7 @@
           ],
           "tile": {
             "id": 3,
-            "type": "RESOURCE_TILE",
-            "resource": "BRICK",
-            "number": 6
+            "type": "DESERT"
           }
         },
         {
@@ -3037,8 +3037,8 @@
           "tile": {
             "id": 4,
             "type": "RESOURCE_TILE",
-            "resource": "ORE",
-            "number": 5
+            "resource": "BRICK",
+            "number": 3
           }
         },
         {
@@ -3051,7 +3051,7 @@
             "id": 5,
             "type": "RESOURCE_TILE",
             "resource": "WOOD",
-            "number": 4
+            "number": 9
           }
         },
         {
@@ -3062,7 +3062,9 @@
           ],
           "tile": {
             "id": 6,
-            "type": "DESERT"
+            "type": "RESOURCE_TILE",
+            "resource": "SHEEP",
+            "number": 4
           }
         },
         {
@@ -3074,8 +3076,8 @@
           "tile": {
             "id": 7,
             "type": "RESOURCE_TILE",
-            "resource": "SHEEP",
-            "number": 5
+            "resource": "WOOD",
+            "number": 8
           }
         },
         {
@@ -3087,7 +3089,7 @@
           "tile": {
             "id": 8,
             "type": "RESOURCE_TILE",
-            "resource": "WHEAT",
+            "resource": "ORE",
             "number": 10
           }
         },
@@ -3100,8 +3102,8 @@
           "tile": {
             "id": 9,
             "type": "RESOURCE_TILE",
-            "resource": "SHEEP",
-            "number": 8
+            "resource": "ORE",
+            "number": 9
           }
         },
         {
@@ -3113,8 +3115,8 @@
           "tile": {
             "id": 10,
             "type": "RESOURCE_TILE",
-            "resource": "SHEEP",
-            "number": 4
+            "resource": "BRICK",
+            "number": 12
           }
         },
         {
@@ -3126,7 +3128,7 @@
           "tile": {
             "id": 11,
             "type": "RESOURCE_TILE",
-            "resource": "SHEEP",
+            "resource": "WHEAT",
             "number": 11
           }
         },
@@ -3140,7 +3142,7 @@
             "id": 12,
             "type": "RESOURCE_TILE",
             "resource": "ORE",
-            "number": 12
+            "number": 4
           }
         },
         {
@@ -3152,8 +3154,8 @@
           "tile": {
             "id": 13,
             "type": "RESOURCE_TILE",
-            "resource": "ORE",
-            "number": 9
+            "resource": "WOOD",
+            "number": 8
           }
         },
         {
@@ -3178,8 +3180,8 @@
           "tile": {
             "id": 15,
             "type": "RESOURCE_TILE",
-            "resource": "WHEAT",
-            "number": 8
+            "resource": "WOOD",
+            "number": 5
           }
         },
         {
@@ -3191,8 +3193,8 @@
           "tile": {
             "id": 16,
             "type": "RESOURCE_TILE",
-            "resource": "WHEAT",
-            "number": 3
+            "resource": "SHEEP",
+            "number": 2
           }
         },
         {
@@ -3204,7 +3206,7 @@
           "tile": {
             "id": 17,
             "type": "RESOURCE_TILE",
-            "resource": "WOOD",
+            "resource": "BRICK",
             "number": 6
           }
         },
@@ -3217,8 +3219,8 @@
           "tile": {
             "id": 18,
             "type": "RESOURCE_TILE",
-            "resource": "BRICK",
-            "number": 2
+            "resource": "SHEEP",
+            "number": 3
           }
         },
         {
@@ -3254,7 +3256,7 @@
             "id": 1,
             "type": "PORT",
             "direction": "NORTHWEST",
-            "resource": "SHEEP"
+            "resource": null
           }
         },
         {
@@ -3277,7 +3279,7 @@
             "id": 2,
             "type": "PORT",
             "direction": "NORTHWEST",
-            "resource": null
+            "resource": "SHEEP"
           }
         },
         {
@@ -3323,7 +3325,7 @@
             "id": 4,
             "type": "PORT",
             "direction": "EAST",
-            "resource": "BRICK"
+            "resource": "ORE"
           }
         },
         {
@@ -3346,7 +3348,7 @@
             "id": 5,
             "type": "PORT",
             "direction": "EAST",
-            "resource": "WOOD"
+            "resource": "BRICK"
           }
         },
         {
@@ -3392,7 +3394,7 @@
             "id": 7,
             "type": "PORT",
             "direction": "SOUTHWEST",
-            "resource": "WHEAT"
+            "resource": "WOOD"
           }
         },
         {
@@ -3415,7 +3417,7 @@
             "id": 8,
             "type": "PORT",
             "direction": "SOUTHWEST",
-            "resource": "ORE"
+            "resource": "WHEAT"
           }
         },
         {
@@ -3431,17 +3433,17 @@
       ],
       "basePlacedNodes": [
         {
-          "id": 18,
+          "id": 9,
           "color": "RED",
           "building": "SETTLEMENT"
         },
         {
-          "id": 8,
+          "id": 18,
           "color": "BLUE",
           "building": "SETTLEMENT"
         },
         {
-          "id": 4,
+          "id": 11,
           "color": "ORANGE",
           "building": "SETTLEMENT"
         }
@@ -3449,22 +3451,22 @@
       "basePlacedEdges": [
         {
           "id": [
-            18,
-            40
+            8,
+            9
           ],
           "color": "RED"
         },
         {
           "id": [
-            8,
-            27
+            16,
+            18
           ],
           "color": "BLUE"
         },
         {
           "id": [
-            3,
-            4
+            11,
+            12
           ],
           "color": "ORANGE"
         }

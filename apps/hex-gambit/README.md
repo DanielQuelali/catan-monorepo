@@ -24,4 +24,5 @@ HEX_GAMBIT_PORT=8090 ./run-hex-gambit.sh
 - The root launcher kills any process already using the assigned port before start.
 - Main screen explicitly tells users their opening placements are evaluated and they will receive a playstyle result.
 - Players click legal settlement and road spots directly on the Catan board for both boards.
-- Board layouts are loaded from real board fixtures in `apps/hex-gambit/data/boards.json` (derived from repo `data/` artifacts).
+- Board layouts are loaded from `apps/hex-gambit/data/boards.json` (opening-state fixtures).
+- Board result win rates and global ranks are loaded from WHITE12 holdout CSV artifacts under `data/analysis/opening_states/<board_id>/initial_branch_analysis_all_sims_holdout.csv` (surfaced at `apps/hex-gambit/data/analysis/...` via symlink).

@@ -1,4 +1,4 @@
-use fastcore::{simulate_many, SimConfig, Stats};
+use fastcore::{simulate_many, simulate_policy_log, SimConfig, Stats};
 use std::fs;
 
 fn parse_stats(line: &str) -> Stats {
@@ -47,4 +47,15 @@ fn golden_seed_stats_match() {
     assert_eq!(actual.turns, expected.turns);
     assert_eq!(actual.wins, expected.wins);
     assert_eq!(actual.illegal_actions, expected.illegal_actions);
+}
+
+#[test]
+fn policy_logs_are_deterministic_for_fixed_seeds() {
+    let seeds = [1000u64, 1001u64, 1002u64, 1003u64];
+    let config = SimConfig::default();
+
+    let first = simulate_policy_log(&seeds, &config);
+    let second = simulate_policy_log(&seeds, &config);
+
+    assert_eq!(first, second);
 }

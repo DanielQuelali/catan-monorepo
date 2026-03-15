@@ -18,6 +18,7 @@ data/analysis/
 # Python/cache
 __pycache__/
 *.pyc
+.venv/
 
 # Local eval outputs
 evals/artifacts/

@@ -3,18 +3,20 @@ use fastcore::engine::{ArmyState, RoadState};
 use fastcore::rng::rng_for_stream;
 use fastcore::state::State;
 use fastcore::types::{
-    ActionPrompt, BuildingLevel, EdgeId, NodeId, PlayerId, Resource, INVALID_TILE, PLAYER_COUNT,
-    RESOURCE_COUNT,
+    ActionPrompt, BuildingLevel, DevCard, EdgeId, NodeId, PlayerId, Resource, INVALID_TILE,
+    PLAYER_COUNT, RESOURCE_COUNT,
 };
 use fastcore::value_player::{
     apply_value_action, apply_value_action_kernel, generate_playable_actions,
+    set_endgame_gap_enabled,
     FastValueFunctionPlayer, ValueAction, ValueActionKind,
 };
 #[cfg(feature = "stackelberg_pruning")]
 use rand::Rng;
+use rand_core::RngCore;
 use serde_json::Value;
-#[cfg(feature = "stackelberg_pruning")]
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::env;
 #[cfg(feature = "stackelberg_pruning")]
 use std::f64::consts::PI;
@@ -73,23 +75,162 @@ struct PlayoutResult {
     winner: Option<PlayerId>,
     vps_by_player: [u8; PLAYER_COUNT],
     num_turns: u32,
+    leader_win_breakdown: Option<LeaderWinBreakdown>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default)]
+struct LeaderWinBreakdown {
+    settlements_built: u8,
+    cities_built: u8,
+    vp_cards: u8,
+    had_lr: bool,
+    had_la: bool,
+    played_monopoly: bool,
+    played_yop: bool,
+    played_road_builder: bool,
+    knights_played: u8,
+    first_turn_settlement: Option<u32>,
+    first_turn_city: Option<u32>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct LeaderWinConditionSummary {
+    pct_has_settlement: f64,
+    avg_settlements: f64,
+    avg_cities: f64,
+    pct_has_city: f64,
+    pct_has_vp: f64,
+    avg_vp_given_has: f64,
+    pct_la: f64,
+    pct_lr: f64,
+    pct_both: f64,
+    pct_played_monopoly: f64,
+    pct_played_yop: f64,
+    pct_played_road_builder: f64,
+    pct_played_knights: f64,
+    avg_knights_given_played: f64,
+    avg_turn_first_city: f64,
+    avg_turn_first_settlement: f64,
+}
+
+#[derive(Clone, Debug)]
 struct PlayoutAggregate {
+    leader: Option<PlayerId>,
     wins: [u64; PLAYER_COUNT],
     total_non_none: u64,
     total_vps: [u64; PLAYER_COUNT],
     total_turns: u64,
     samples: u64,
+    leader_wins: u64,
+    leader_wins_has_settlement: u64,
+    sum_settlements: u64,
+    sum_cities: u64,
+    leader_wins_has_city: u64,
+    leader_wins_has_vp: u64,
+    sum_vp_cards: u64,
+    leader_wins_has_vp_count: u64,
+    leader_wins_la: u64,
+    leader_wins_lr: u64,
+    leader_wins_both: u64,
+    leader_wins_played_monopoly: u64,
+    leader_wins_played_yop: u64,
+    leader_wins_played_road_builder: u64,
+    leader_wins_played_knights: u64,
+    sum_knights_played: u64,
+    leader_wins_played_knights_count: u64,
+    sum_turn_first_city: u64,
+    leader_wins_has_city_count: u64,
+    sum_turn_first_settlement: u64,
+    leader_wins_has_settlement_count: u64,
 }
 
 impl PlayoutAggregate {
+    fn with_leader(leader: Option<PlayerId>) -> Self {
+        Self {
+            leader,
+            wins: [0u64; PLAYER_COUNT],
+            total_non_none: 0,
+            total_vps: [0u64; PLAYER_COUNT],
+            total_turns: 0,
+            samples: 0,
+            leader_wins: 0,
+            leader_wins_has_settlement: 0,
+            sum_settlements: 0,
+            sum_cities: 0,
+            leader_wins_has_city: 0,
+            leader_wins_has_vp: 0,
+            sum_vp_cards: 0,
+            leader_wins_has_vp_count: 0,
+            leader_wins_la: 0,
+            leader_wins_lr: 0,
+            leader_wins_both: 0,
+            leader_wins_played_monopoly: 0,
+            leader_wins_played_yop: 0,
+            leader_wins_played_road_builder: 0,
+            leader_wins_played_knights: 0,
+            sum_knights_played: 0,
+            leader_wins_played_knights_count: 0,
+            sum_turn_first_city: 0,
+            leader_wins_has_city_count: 0,
+            sum_turn_first_settlement: 0,
+            leader_wins_has_settlement_count: 0,
+        }
+    }
+
     fn update(&mut self, result: &PlayoutResult) {
         self.samples += 1;
         if let Some(winner) = result.winner {
             self.wins[winner as usize] += 1;
             self.total_non_none += 1;
+            if self.leader == Some(winner) {
+                self.leader_wins += 1;
+                if let Some(breakdown) = result.leader_win_breakdown {
+                    self.sum_settlements += breakdown.settlements_built as u64;
+                    self.sum_cities += breakdown.cities_built as u64;
+                    if breakdown.settlements_built > 0 {
+                        self.leader_wins_has_settlement += 1;
+                    }
+                    if breakdown.cities_built > 0 {
+                        self.leader_wins_has_city += 1;
+                    }
+                    if breakdown.vp_cards > 0 {
+                        self.leader_wins_has_vp += 1;
+                        self.sum_vp_cards += breakdown.vp_cards as u64;
+                        self.leader_wins_has_vp_count += 1;
+                    }
+                    if breakdown.had_la {
+                        self.leader_wins_la += 1;
+                    }
+                    if breakdown.had_lr {
+                        self.leader_wins_lr += 1;
+                    }
+                    if breakdown.had_la && breakdown.had_lr {
+                        self.leader_wins_both += 1;
+                    }
+                    if breakdown.played_monopoly {
+                        self.leader_wins_played_monopoly += 1;
+                    }
+                    if breakdown.played_yop {
+                        self.leader_wins_played_yop += 1;
+                    }
+                    if breakdown.played_road_builder {
+                        self.leader_wins_played_road_builder += 1;
+                    }
+                    if breakdown.knights_played > 0 {
+                        self.leader_wins_played_knights += 1;
+                        self.sum_knights_played += breakdown.knights_played as u64;
+                        self.leader_wins_played_knights_count += 1;
+                    }
+                    if let Some(turn) = breakdown.first_turn_city {
+                        self.sum_turn_first_city += turn as u64;
+                        self.leader_wins_has_city_count += 1;
+                    }
+                    if let Some(turn) = breakdown.first_turn_settlement {
+                        self.sum_turn_first_settlement += turn as u64;
+                        self.leader_wins_has_settlement_count += 1;
+                    }
+                }
+            }
         }
         for idx in 0..PLAYER_COUNT {
             self.total_vps[idx] += result.vps_by_player[idx] as u64;
@@ -105,6 +246,33 @@ impl PlayoutAggregate {
             self.wins[idx] += other.wins[idx];
             self.total_vps[idx] += other.total_vps[idx];
         }
+        self.leader_wins += other.leader_wins;
+        self.leader_wins_has_settlement += other.leader_wins_has_settlement;
+        self.sum_settlements += other.sum_settlements;
+        self.sum_cities += other.sum_cities;
+        self.leader_wins_has_city += other.leader_wins_has_city;
+        self.leader_wins_has_vp += other.leader_wins_has_vp;
+        self.sum_vp_cards += other.sum_vp_cards;
+        self.leader_wins_has_vp_count += other.leader_wins_has_vp_count;
+        self.leader_wins_la += other.leader_wins_la;
+        self.leader_wins_lr += other.leader_wins_lr;
+        self.leader_wins_both += other.leader_wins_both;
+        self.leader_wins_played_monopoly += other.leader_wins_played_monopoly;
+        self.leader_wins_played_yop += other.leader_wins_played_yop;
+        self.leader_wins_played_road_builder += other.leader_wins_played_road_builder;
+        self.leader_wins_played_knights += other.leader_wins_played_knights;
+        self.sum_knights_played += other.sum_knights_played;
+        self.leader_wins_played_knights_count += other.leader_wins_played_knights_count;
+        self.sum_turn_first_city += other.sum_turn_first_city;
+        self.leader_wins_has_city_count += other.leader_wins_has_city_count;
+        self.sum_turn_first_settlement += other.sum_turn_first_settlement;
+        self.leader_wins_has_settlement_count += other.leader_wins_has_settlement_count;
+    }
+}
+
+impl Default for PlayoutAggregate {
+    fn default() -> Self {
+        Self::with_leader(None)
     }
 }
 
@@ -114,6 +282,7 @@ struct PlayoutSummary {
     avg_vps_by_player: [f64; PLAYER_COUNT],
     avg_turns: f64,
     winner_label: String,
+    leader_win_conditions: LeaderWinConditionSummary,
     workers_used: usize,
     wall_time_sec: f64,
     cpu_time_sec: f64,
@@ -675,6 +844,53 @@ struct AllSimsEntry {
     source: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct HoldoutLeaderKey {
+    leader_branch_index: usize,
+    leader_settlement: NodeId,
+    leader_road: (NodeId, NodeId),
+    leader_settlement2: Option<NodeId>,
+    leader_road2: Option<(NodeId, NodeId)>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct HoldoutTargets {
+    branch_indices: HashSet<usize>,
+    leader_keys: HashSet<HoldoutLeaderKey>,
+}
+
+impl HoldoutTargets {
+    fn contains_branch(&self, leader_branch_index: usize) -> bool {
+        self.branch_indices.contains(&leader_branch_index)
+    }
+
+    fn contains_leader_key(
+        &self,
+        leader_branch_index: usize,
+        leader_settlement: NodeId,
+        leader_road: (NodeId, NodeId),
+        leader_settlement2: Option<NodeId>,
+        leader_road2: Option<(NodeId, NodeId)>,
+    ) -> bool {
+        self.leader_keys.contains(&HoldoutLeaderKey {
+            leader_branch_index,
+            leader_settlement,
+            leader_road,
+            leader_settlement2,
+            leader_road2,
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
+struct HoldoutReplayRow {
+    leader_branch_index: usize,
+    leader: PlacementAction,
+    leader_second: Option<PlacementAction>,
+    followers: Vec<PlacementAction>,
+    sims_run: u64,
+}
+
 #[derive(Clone, Debug)]
 struct StackelbergConfig {
     budget: u64,
@@ -718,6 +934,8 @@ struct Args {
     dry_run: bool,
     holdout_rerun: bool,
     holdout_only: bool,
+    holdout_targets: Option<String>,
+    holdout_replay: Option<String>,
     all_sims_output: Option<String>,
     budget: u64,
     alpha0: f64,
@@ -726,6 +944,7 @@ struct Args {
     min_samples: u64,
     batch_sims: usize,
     red_global_prior_weight: f64,
+    no_endgame_gap: bool,
 }
 
 fn parse_args() -> Args {
@@ -746,6 +965,8 @@ fn parse_args() -> Args {
     let mut dry_run = false;
     let mut holdout_rerun = false;
     let mut holdout_only = false;
+    let mut holdout_targets = None;
+    let mut holdout_replay = None;
     let mut all_sims_output = None;
     let mut budget = DEFAULT_BUDGET;
     let mut alpha0 = DEFAULT_ALPHA0;
@@ -754,6 +975,7 @@ fn parse_args() -> Args {
     let mut min_samples = DEFAULT_MIN_SAMPLES;
     let mut batch_sims = DEFAULT_BATCH_SIMS;
     let mut red_global_prior_weight = DEFAULT_RED_GLOBAL_PRIOR_WEIGHT;
+    let mut no_endgame_gap = false;
 
     let mut args = env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -836,6 +1058,16 @@ fn parse_args() -> Args {
             "--holdout-only" => {
                 holdout_only = true;
             }
+            "--holdout-targets" => {
+                if let Some(value) = args.next() {
+                    holdout_targets = Some(value);
+                }
+            }
+            "--holdout-replay" => {
+                if let Some(value) = args.next() {
+                    holdout_replay = Some(value);
+                }
+            }
             "--all-sims-output" => {
                 if let Some(value) = args.next() {
                     all_sims_output = Some(value);
@@ -877,9 +1109,12 @@ fn parse_args() -> Args {
                         value.parse().unwrap_or(DEFAULT_RED_GLOBAL_PRIOR_WEIGHT);
                 }
             }
+            "--no-endgame-gap" | "--disable-endgame-gap" => {
+                no_endgame_gap = true;
+            }
             "-h" | "--help" => {
                 eprintln!(
-                    "Usage: initial-branch-analysis [--state <path>] [--board <path>] [--num-sims <count>] [--holdout-sims <count>] [--workers <count>] [--seed <seed>] [--start-seed <seed>] [--sort-color <COLOR>] [--limit <count>] [--leader-settlement <node>] [--output <path>] [--max-turns <turns>] [--blue2] [--orange2] [--white12] [--dry-run] [--holdout-rerun] [--holdout-only] [--all-sims-output <path>] [--budget <count>] [--alpha0 <a>] [--beta0 <b>] [--rho <p>] [--min-samples <count>] [--batch-sims <count>] [--red-global-prior-weight <w>] (default: infer stackelberg mode from state current_color)"
+                    "Usage: initial-branch-analysis [--state <path>] [--board <path>] [--num-sims <count>] [--holdout-sims <count>] [--workers <count>] [--seed <seed>] [--start-seed <seed>] [--sort-color <COLOR>] [--limit <count>] [--leader-settlement <node>] [--output <path>] [--max-turns <turns>] [--blue2] [--orange2] [--white12] [--dry-run] [--holdout-rerun] [--holdout-only] [--holdout-targets <path>] [--holdout-replay <path>] [--all-sims-output <path>] [--budget <count>] [--alpha0 <a>] [--beta0 <b>] [--rho <p>] [--min-samples <count>] [--batch-sims <count>] [--red-global-prior-weight <w>] [--no-endgame-gap] (default: infer stackelberg mode from state current_color)"
                 );
                 std::process::exit(0);
             }
@@ -908,6 +1143,8 @@ fn parse_args() -> Args {
         dry_run,
         holdout_rerun,
         holdout_only,
+        holdout_targets,
+        holdout_replay,
         all_sims_output,
         budget,
         alpha0,
@@ -916,6 +1153,7 @@ fn parse_args() -> Args {
         min_samples,
         batch_sims,
         red_global_prior_weight,
+        no_endgame_gap,
     }
 }
 
@@ -1112,6 +1350,435 @@ fn ensure_parent_dir(path: &str) {
     }
 }
 
+fn parse_node_id(value: &str, field: &str, line_no: usize) -> NodeId {
+    value
+        .parse::<u8>()
+        .unwrap_or_else(|_| panic!("invalid {field} at holdout targets line {line_no}: {value}"))
+}
+
+fn parse_node_id_opt(value: &str, field: &str, line_no: usize) -> Option<NodeId> {
+    if value.is_empty() {
+        None
+    } else {
+        Some(parse_node_id(value, field, line_no))
+    }
+}
+
+fn parse_road_pair(value: &str, field: &str, line_no: usize) -> (NodeId, NodeId) {
+    let mut parts = value.split('-');
+    let left = parts
+        .next()
+        .unwrap_or("")
+        .parse::<u8>()
+        .unwrap_or_else(|_| panic!("invalid {field} at holdout targets line {line_no}: {value}"));
+    let right = parts
+        .next()
+        .unwrap_or("")
+        .parse::<u8>()
+        .unwrap_or_else(|_| panic!("invalid {field} at holdout targets line {line_no}: {value}"));
+    if parts.next().is_some() {
+        panic!("invalid {field} at holdout targets line {line_no}: {value}");
+    }
+    (left, right)
+}
+
+fn parse_road_pair_opt(value: &str, field: &str, line_no: usize) -> Option<(NodeId, NodeId)> {
+    if value.is_empty() {
+        None
+    } else {
+        Some(parse_road_pair(value, field, line_no))
+    }
+}
+
+fn holdout_header_index(headers: &[&str], name: &str) -> usize {
+    headers
+        .iter()
+        .position(|header| *header == name)
+        .unwrap_or_else(|| panic!("holdout targets csv is missing required column {name}"))
+}
+
+fn load_holdout_targets(path: &str) -> HoldoutTargets {
+    let content = fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("failed to read holdout targets {path}: {e}"));
+    let mut lines = content.lines();
+    let header_line = lines
+        .next()
+        .unwrap_or_else(|| panic!("holdout targets file is empty: {path}"));
+    let headers: Vec<&str> = header_line.split(',').collect();
+
+    let idx_source = headers.iter().position(|header| *header == "SOURCE");
+    let idx_branch = holdout_header_index(&headers, "LEADER_BRANCH_INDEX");
+    let idx_settlement = holdout_header_index(&headers, "LEADER_SETTLEMENT");
+    let idx_road = holdout_header_index(&headers, "LEADER_ROAD");
+    let idx_settlement2 = holdout_header_index(&headers, "LEADER_SETTLEMENT2");
+    let idx_road2 = holdout_header_index(&headers, "LEADER_ROAD2");
+
+    let mut targets = HoldoutTargets::default();
+    for (offset, line) in lines.enumerate() {
+        let line_no = offset + 2;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let cols: Vec<&str> = line.split(',').collect();
+        let value_at = |idx: usize| cols.get(idx).copied().unwrap_or("");
+
+        if let Some(source_idx) = idx_source {
+            if value_at(source_idx) != "holdout" {
+                continue;
+            }
+        }
+
+        let branch_index = value_at(idx_branch).parse::<usize>().unwrap_or_else(|_| {
+            panic!(
+                "invalid LEADER_BRANCH_INDEX at holdout targets line {line_no}: {}",
+                value_at(idx_branch)
+            )
+        });
+        let leader_settlement =
+            parse_node_id(value_at(idx_settlement), "LEADER_SETTLEMENT", line_no);
+        let leader_road = parse_road_pair(value_at(idx_road), "LEADER_ROAD", line_no);
+        let leader_settlement2 =
+            parse_node_id_opt(value_at(idx_settlement2), "LEADER_SETTLEMENT2", line_no);
+        let leader_road2 = parse_road_pair_opt(value_at(idx_road2), "LEADER_ROAD2", line_no);
+
+        targets.branch_indices.insert(branch_index);
+        targets.leader_keys.insert(HoldoutLeaderKey {
+            leader_branch_index: branch_index,
+            leader_settlement,
+            leader_road,
+            leader_settlement2,
+            leader_road2,
+        });
+    }
+
+    if targets.branch_indices.is_empty() {
+        panic!("no holdout target rows parsed from {path}");
+    }
+
+    targets
+}
+
+fn should_emit_holdout_entry(
+    holdout_targets: Option<&HoldoutTargets>,
+    leader_branch_index: usize,
+    leader: &PlacementAction,
+    leader_second: Option<&PlacementAction>,
+) -> bool {
+    holdout_targets.map_or(true, |targets| {
+        targets.contains_leader_key(
+            leader_branch_index,
+            leader.settlement,
+            leader.road,
+            leader_second.map(|action| action.settlement),
+            leader_second.map(|action| action.road),
+        )
+    })
+}
+
+fn holdout_header_index_opt(headers: &[&str], name: &str) -> Option<usize> {
+    headers.iter().position(|header| *header == name)
+}
+
+fn load_holdout_replay_rows(path: &str) -> Vec<HoldoutReplayRow> {
+    let content = fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("failed to read holdout replay {path}: {e}"));
+    let mut lines = content.lines();
+    let header_line = lines
+        .next()
+        .unwrap_or_else(|| panic!("holdout replay file is empty: {path}"));
+    let headers: Vec<&str> = header_line.split(',').collect();
+
+    let idx_source = holdout_header_index_opt(&headers, "SOURCE");
+    let idx_sims_run = holdout_header_index_opt(&headers, "SIMS_RUN");
+    let idx_leader_branch = holdout_header_index(&headers, "LEADER_BRANCH_INDEX");
+    let idx_leader_color = holdout_header_index(&headers, "LEADER_COLOR");
+    let idx_leader_settlement = holdout_header_index(&headers, "LEADER_SETTLEMENT");
+    let idx_leader_road = holdout_header_index(&headers, "LEADER_ROAD");
+    let idx_leader_settlement2 = holdout_header_index_opt(&headers, "LEADER_SETTLEMENT2");
+    let idx_leader_road2 = holdout_header_index_opt(&headers, "LEADER_ROAD2");
+
+    let mut follower_indices = Vec::new();
+    for idx in 1..=4 {
+        let color = holdout_header_index_opt(&headers, &format!("FOLLOWER{idx}_COLOR"));
+        let settlement = holdout_header_index_opt(&headers, &format!("FOLLOWER{idx}_SETTLEMENT"));
+        let road = holdout_header_index_opt(&headers, &format!("FOLLOWER{idx}_ROAD"));
+        if let (Some(color), Some(settlement), Some(road)) = (color, settlement, road) {
+            follower_indices.push((color, settlement, road));
+        }
+    }
+
+    let mut rows = Vec::new();
+    for (offset, line) in lines.enumerate() {
+        let line_no = offset + 2;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let cols: Vec<&str> = line.split(',').collect();
+        let value_at = |idx: usize| cols.get(idx).copied().unwrap_or("");
+
+        if let Some(source_idx) = idx_source {
+            if value_at(source_idx) != "holdout" {
+                continue;
+            }
+        }
+
+        let leader_branch_index =
+            value_at(idx_leader_branch)
+                .parse::<usize>()
+                .unwrap_or_else(|_| {
+                    panic!(
+                        "invalid LEADER_BRANCH_INDEX at holdout replay line {line_no}: {}",
+                        value_at(idx_leader_branch)
+                    )
+                });
+        let leader_color = value_at(idx_leader_color);
+        if leader_color.is_empty() {
+            panic!("missing LEADER_COLOR at holdout replay line {line_no}");
+        }
+        let leader = PlacementAction {
+            color: leader_color.to_string(),
+            settlement: parse_node_id(
+                value_at(idx_leader_settlement),
+                "LEADER_SETTLEMENT",
+                line_no,
+            ),
+            road: parse_road_pair(value_at(idx_leader_road), "LEADER_ROAD", line_no),
+        };
+
+        let leader_second = match (idx_leader_settlement2, idx_leader_road2) {
+            (Some(settlement_idx), Some(road_idx)) => {
+                let settlement = value_at(settlement_idx);
+                let road = value_at(road_idx);
+                if settlement.is_empty() || road.is_empty() {
+                    None
+                } else {
+                    Some(PlacementAction {
+                        color: leader.color.clone(),
+                        settlement: parse_node_id(settlement, "LEADER_SETTLEMENT2", line_no),
+                        road: parse_road_pair(road, "LEADER_ROAD2", line_no),
+                    })
+                }
+            }
+            _ => None,
+        };
+
+        let mut followers = Vec::new();
+        for (idx_color, idx_settlement, idx_road) in &follower_indices {
+            let color = value_at(*idx_color);
+            let settlement = value_at(*idx_settlement);
+            let road = value_at(*idx_road);
+            if color.is_empty() || settlement.is_empty() || road.is_empty() {
+                continue;
+            }
+            followers.push(PlacementAction {
+                color: color.to_string(),
+                settlement: parse_node_id(settlement, "FOLLOWER_SETTLEMENT", line_no),
+                road: parse_road_pair(road, "FOLLOWER_ROAD", line_no),
+            });
+        }
+
+        let sims_run = idx_sims_run
+            .and_then(|idx| value_at(idx).parse::<u64>().ok())
+            .unwrap_or(0);
+
+        rows.push(HoldoutReplayRow {
+            leader_branch_index,
+            leader,
+            leader_second,
+            followers,
+            sims_run,
+        });
+    }
+
+    if rows.is_empty() {
+        panic!("no holdout replay rows parsed from {path}");
+    }
+
+    rows
+}
+
+fn apply_initial_placement_action(
+    board: &fastcore::board::Board,
+    state: &mut State,
+    road_state: &mut RoadState,
+    army_state: &mut ArmyState,
+    colors: &[String],
+    action: &PlacementAction,
+    seed: u64,
+) {
+    let player = color_to_player(colors, &action.color);
+    let mut rng = rng_for_stream(seed, 0);
+
+    state.active_player = player;
+    state.turn_player = player;
+    state.is_initial_build_phase = true;
+    state.current_prompt = ActionPrompt::BuildInitialSettlement;
+    apply_value_action(
+        board,
+        state,
+        road_state,
+        army_state,
+        &ValueAction {
+            player,
+            kind: ValueActionKind::BuildSettlement(action.settlement),
+        },
+        &mut rng,
+    );
+
+    let edge = edge_id_for_nodes(board, action.road.0, action.road.1).unwrap_or_else(|| {
+        panic!(
+            "edge id not found for replay road {}-{}",
+            action.road.0, action.road.1
+        )
+    });
+    state.active_player = player;
+    state.turn_player = player;
+    state.is_initial_build_phase = true;
+    state.current_prompt = ActionPrompt::BuildInitialRoad;
+    apply_value_action(
+        board,
+        state,
+        road_state,
+        army_state,
+        &ValueAction {
+            player,
+            kind: ValueActionKind::BuildRoad(edge),
+        },
+        &mut rng,
+    );
+}
+
+fn summarize_holdout_replay_rows(
+    board: &fastcore::board::Board,
+    base_state: &State,
+    base_road: RoadState,
+    base_army: ArmyState,
+    base_seed: u64,
+    rows: &[HoldoutReplayRow],
+    colors: &[String],
+    seeds: &[u64],
+    start_seed: u64,
+    workers: usize,
+    max_turns: u32,
+    sort_color_idx: usize,
+    dry_run: bool,
+) -> (Vec<BranchEvaluation>, Vec<AllSimsEntry>) {
+    let mut seed_cache: HashMap<u64, Vec<u64>> = HashMap::new();
+    let mut all_sims_entries = Vec::with_capacity(rows.len());
+    let mut best_by_branch: HashMap<usize, BranchEvaluation> = HashMap::new();
+
+    for row in rows {
+        let mut state = base_state.clone();
+        let mut road_state = base_road;
+        let mut army_state = base_army;
+
+        apply_initial_placement_action(
+            board,
+            &mut state,
+            &mut road_state,
+            &mut army_state,
+            colors,
+            &row.leader,
+            base_seed,
+        );
+        if let Some(leader_second) = row.leader_second.as_ref() {
+            apply_initial_placement_action(
+                board,
+                &mut state,
+                &mut road_state,
+                &mut army_state,
+                colors,
+                leader_second,
+                base_seed,
+            );
+        }
+        for follower in &row.followers {
+            apply_initial_placement_action(
+                board,
+                &mut state,
+                &mut road_state,
+                &mut army_state,
+                colors,
+                follower,
+                base_seed,
+            );
+        }
+
+        let replay_seeds: &[u64] = if !seeds.is_empty() {
+            seeds
+        } else {
+            let count = row.sims_run;
+            seed_cache
+                .entry(count)
+                .or_insert_with(|| (0..count).map(|offset| start_seed + offset).collect())
+                .as_slice()
+        };
+        let summary = if dry_run {
+            dry_run_summary(colors)
+        } else {
+            summarize_playouts(
+                board,
+                &state,
+                road_state,
+                army_state,
+                replay_seeds,
+                workers,
+                colors,
+                max_turns,
+                Some(color_to_player(colors, &row.leader.color)),
+            )
+        };
+
+        let sims_run = if replay_seeds.is_empty() {
+            row.sims_run
+        } else {
+            replay_seeds.len() as u64
+        };
+        let score = summary.win_probabilities[sort_color_idx];
+        let pips = settlement_pips(board, row.leader.settlement);
+        let pips2 = row
+            .leader_second
+            .as_ref()
+            .map(|action| settlement_pips(board, action.settlement));
+        let evaluation = BranchEvaluation {
+            score,
+            branch_index: row.leader_branch_index,
+            settlement_node: row.leader.settlement,
+            road_edge: row.leader.road,
+            settlement_node2: row.leader_second.as_ref().map(|action| action.settlement),
+            road_edge2: row.leader_second.as_ref().map(|action| action.road),
+            pips,
+            pips2,
+            summary: summary.clone(),
+        };
+        best_by_branch
+            .entry(row.leader_branch_index)
+            .and_modify(|existing| {
+                if evaluation.score > existing.score
+                    || ((evaluation.score - existing.score).abs() < f64::EPSILON
+                        && evaluation.road_edge < existing.road_edge)
+                {
+                    *existing = evaluation.clone();
+                }
+            })
+            .or_insert_with(|| evaluation.clone());
+
+        all_sims_entries.push(AllSimsEntry {
+            leader_branch_index: row.leader_branch_index,
+            leader: row.leader.clone(),
+            leader_second: row.leader_second.clone(),
+            followers: row.followers.clone(),
+            summary,
+            sims_run,
+            source: "holdout".to_string(),
+        });
+    }
+
+    let mut branches: Vec<BranchEvaluation> = best_by_branch.into_values().collect();
+    branches.sort_by_key(|evaluation| evaluation.branch_index);
+    (branches, all_sims_entries)
+}
+
 fn python_resource_index(resource: Resource) -> usize {
     match resource {
         Resource::Lumber => 0,
@@ -1210,8 +1877,7 @@ fn player_points(
         points[*owner as usize] += add;
     }
     for player in 0..PLAYER_COUNT {
-        points[player] +=
-            state.dev_cards_in_hand[player][fastcore::types::DevCard::VictoryPoint.as_index()];
+        points[player] += state.dev_cards_in_hand[player][DevCard::VictoryPoint.as_index()];
     }
     if let Some(owner) = road_state.owner() {
         points[owner as usize] += 2;
@@ -1232,6 +1898,65 @@ fn check_winner(state: &State, road_state: &RoadState, army_state: &ArmyState) -
     None
 }
 
+#[inline]
+fn action_may_change_points(kind: &ValueActionKind) -> bool {
+    matches!(
+        kind,
+        ValueActionKind::BuildSettlement(_)
+            | ValueActionKind::BuildRoad(_)
+            | ValueActionKind::BuildCity(_)
+            | ValueActionKind::PlayKnight
+            | ValueActionKind::BuyDevCard
+    )
+}
+
+fn compute_leader_win_breakdown(
+    state: &State,
+    road_state: &RoadState,
+    army_state: &ArmyState,
+    winner: PlayerId,
+    first_settlement_turn: &[Option<u32>; PLAYER_COUNT],
+    first_city_turn: &[Option<u32>; PLAYER_COUNT],
+) -> LeaderWinBreakdown {
+    let mut settlements = 0u8;
+    let mut cities = 0u8;
+    for (idx, owner) in state.node_owner.iter().enumerate() {
+        if *owner != winner {
+            continue;
+        }
+        match state.node_level[idx] {
+            BuildingLevel::Settlement => settlements += 1,
+            BuildingLevel::City => cities += 1,
+            BuildingLevel::Empty => {}
+        }
+    }
+
+    let winner_idx = winner as usize;
+    let settlements_built = settlements.saturating_add(cities).saturating_sub(2);
+    let vp_cards = state.dev_cards_in_hand[winner_idx][DevCard::VictoryPoint.as_index()];
+    let had_la = army_state.owner() == Some(winner);
+    let had_lr = road_state.owner() == Some(winner);
+    let played_monopoly = state.dev_cards_played[winner_idx][DevCard::Monopoly.as_index()] > 0;
+    let played_yop = state.dev_cards_played[winner_idx][DevCard::YearOfPlenty.as_index()] > 0;
+    let played_road_builder =
+        state.dev_cards_played[winner_idx][DevCard::RoadBuilding.as_index()] > 0;
+    let knights_played = state.dev_cards_played[winner_idx][DevCard::Knight.as_index()];
+
+    LeaderWinBreakdown {
+        settlements_built,
+        cities_built: cities,
+        vp_cards,
+        had_lr,
+        had_la,
+        played_monopoly,
+        played_yop,
+        played_road_builder,
+        knights_played,
+        first_turn_settlement: first_settlement_turn[winner_idx],
+        first_turn_city: first_city_turn[winner_idx],
+    }
+}
+
 fn simulate_from_state_with_scratch(
     board: &fastcore::board::Board,
     base_state: &State,
@@ -1248,7 +1973,11 @@ fn simulate_from_state_with_scratch(
     scratch_state.clone_from(base_state);
     let mut road_state = base_road;
     let mut army_state = base_army;
+    let use_legacy_apply = std::env::var_os("IBA_USE_LEGACY_APPLY").is_some();
+    let debug_compare_apply = std::env::var_os("IBA_DEBUG_COMPARE_APPLY").is_some();
     let mut winner = None;
+    let mut first_settlement_turn: [Option<u32>; PLAYER_COUNT] = [None; PLAYER_COUNT];
+    let mut first_city_turn: [Option<u32>; PLAYER_COUNT] = [None; PLAYER_COUNT];
     #[cfg(feature = "stackelberg_pruning")]
     let mut follower_settlements: [Option<NodeId>; 3] = [None, None, None];
     #[cfg(feature = "stackelberg_pruning")]
@@ -1267,6 +1996,21 @@ fn simulate_from_state_with_scratch(
         let player = scratch_state.active_player as usize;
         let action =
             players[player].decide(board, scratch_state, &road_state, &army_state, &mut rng);
+        let turn_now = scratch_state.num_turns;
+        let action_player = action.player as usize;
+        match action.kind {
+            ValueActionKind::BuildSettlement(_) => {
+                if first_settlement_turn[action_player].is_none() {
+                    first_settlement_turn[action_player] = Some(turn_now);
+                }
+            }
+            ValueActionKind::BuildCity(_) => {
+                if first_city_turn[action_player].is_none() {
+                    first_city_turn[action_player] = Some(turn_now);
+                }
+            }
+            _ => {}
+        }
         #[cfg(feature = "stackelberg_pruning")]
         if let Some(tracked) = tracked_followers {
             if let Some(idx) = tracked
@@ -1292,22 +2036,97 @@ fn simulate_from_state_with_scratch(
                 }
             }
         }
-        apply_value_action_kernel(
-            board,
-            scratch_state,
-            &mut road_state,
-            &mut army_state,
-            &action,
-            &mut rng,
-        );
-        if let Some(found) = check_winner(scratch_state, &road_state, &army_state) {
-            winner = Some(found);
-            break;
+        if debug_compare_apply {
+            let mut legacy_state = scratch_state.clone();
+            let mut legacy_road_state = road_state;
+            let mut legacy_army_state = army_state;
+            let mut legacy_rng = rng.clone();
+            apply_value_action(
+                board,
+                &mut legacy_state,
+                &mut legacy_road_state,
+                &mut legacy_army_state,
+                &action,
+                &mut legacy_rng,
+            );
+
+            let mut kernel_state = scratch_state.clone();
+            let mut kernel_road_state = road_state;
+            let mut kernel_army_state = army_state;
+            let mut kernel_rng = rng.clone();
+            apply_value_action_kernel(
+                board,
+                &mut kernel_state,
+                &mut kernel_road_state,
+                &mut kernel_army_state,
+                &action,
+                &mut kernel_rng,
+            );
+
+            let road_equal = (0..PLAYER_COUNT).all(|idx| {
+                legacy_road_state.length_for_player(idx as PlayerId)
+                    == kernel_road_state.length_for_player(idx as PlayerId)
+            }) && legacy_road_state.owner() == kernel_road_state.owner()
+                && legacy_road_state.length() == kernel_road_state.length();
+            let army_equal = legacy_army_state.owner() == kernel_army_state.owner()
+                && legacy_army_state.size() == kernel_army_state.size();
+            let mut legacy_rng_probe = legacy_rng.clone();
+            let mut kernel_rng_probe = kernel_rng.clone();
+            let rng_equal = legacy_rng_probe.next_u64() == kernel_rng_probe.next_u64();
+
+            if legacy_state != kernel_state || !road_equal || !army_equal || !rng_equal {
+                panic!(
+                    "kernel apply mismatch at turn={} action={:?}\nlegacy_prompt={:?} kernel_prompt={:?}\nlegacy_turn={} kernel_turn={}\nrng_equal={}",
+                    scratch_state.num_turns,
+                    action,
+                    legacy_state.current_prompt,
+                    kernel_state.current_prompt,
+                    legacy_state.turn_player,
+                    kernel_state.turn_player,
+                    rng_equal,
+                );
+            }
+        }
+
+        if use_legacy_apply {
+            apply_value_action(
+                board,
+                scratch_state,
+                &mut road_state,
+                &mut army_state,
+                &action,
+                &mut rng,
+            );
+        } else {
+            apply_value_action_kernel(
+                board,
+                scratch_state,
+                &mut road_state,
+                &mut army_state,
+                &action,
+                &mut rng,
+            );
+        }
+        if action_may_change_points(&action.kind) {
+            if let Some(found) = check_winner(scratch_state, &road_state, &army_state) {
+                winner = Some(found);
+                break;
+            }
         }
     }
 
     let winner = winner.or_else(|| check_winner(scratch_state, &road_state, &army_state));
     let vps_by_player = player_points(scratch_state, &road_state, &army_state);
+    let leader_win_breakdown = winner.map(|winner_id| {
+        compute_leader_win_breakdown(
+            scratch_state,
+            &road_state,
+            &army_state,
+            winner_id,
+            &first_settlement_turn,
+            &first_city_turn,
+        )
+    });
     #[cfg(feature = "stackelberg_pruning")]
     if let Some(out) = follower_trace_out {
         for idx in 0..3 {
@@ -1321,6 +2140,7 @@ fn simulate_from_state_with_scratch(
         winner,
         vps_by_player,
         num_turns: scratch_state.num_turns,
+        leader_win_breakdown,
     }
 }
 
@@ -1355,6 +2175,68 @@ fn average_turns_from_total(total_turns: u64, sims_run: u64) -> f64 {
     (avg * 100.0).round() / 100.0
 }
 
+fn percent_from_counts(numerator: u64, denominator: u64) -> f64 {
+    if denominator == 0 {
+        return 0.0;
+    }
+    ((numerator as f64 / denominator as f64) * 100.0 * 10.0).round() / 10.0
+}
+
+fn average_from_counts(numerator: u64, denominator: u64) -> f64 {
+    if denominator == 0 {
+        return 0.0;
+    }
+    (numerator as f64 / denominator as f64 * 100.0).round() / 100.0
+}
+
+fn leader_win_condition_summary(aggregate: &PlayoutAggregate) -> LeaderWinConditionSummary {
+    LeaderWinConditionSummary {
+        pct_has_settlement: percent_from_counts(
+            aggregate.leader_wins_has_settlement,
+            aggregate.leader_wins,
+        ),
+        avg_settlements: average_from_counts(aggregate.sum_settlements, aggregate.leader_wins),
+        avg_cities: average_from_counts(aggregate.sum_cities, aggregate.leader_wins),
+        pct_has_city: percent_from_counts(aggregate.leader_wins_has_city, aggregate.leader_wins),
+        pct_has_vp: percent_from_counts(aggregate.leader_wins_has_vp, aggregate.leader_wins),
+        avg_vp_given_has: average_from_counts(
+            aggregate.sum_vp_cards,
+            aggregate.leader_wins_has_vp_count,
+        ),
+        pct_la: percent_from_counts(aggregate.leader_wins_la, aggregate.leader_wins),
+        pct_lr: percent_from_counts(aggregate.leader_wins_lr, aggregate.leader_wins),
+        pct_both: percent_from_counts(aggregate.leader_wins_both, aggregate.leader_wins),
+        pct_played_monopoly: percent_from_counts(
+            aggregate.leader_wins_played_monopoly,
+            aggregate.leader_wins,
+        ),
+        pct_played_yop: percent_from_counts(
+            aggregate.leader_wins_played_yop,
+            aggregate.leader_wins,
+        ),
+        pct_played_road_builder: percent_from_counts(
+            aggregate.leader_wins_played_road_builder,
+            aggregate.leader_wins,
+        ),
+        pct_played_knights: percent_from_counts(
+            aggregate.leader_wins_played_knights,
+            aggregate.leader_wins,
+        ),
+        avg_knights_given_played: average_from_counts(
+            aggregate.sum_knights_played,
+            aggregate.leader_wins_played_knights_count,
+        ),
+        avg_turn_first_city: average_from_counts(
+            aggregate.sum_turn_first_city,
+            aggregate.leader_wins_has_city_count,
+        ),
+        avg_turn_first_settlement: average_from_counts(
+            aggregate.sum_turn_first_settlement,
+            aggregate.leader_wins_has_settlement_count,
+        ),
+    }
+}
+
 fn dominant_winner_label(colors: &[String], win_probs: &[f64; PLAYER_COUNT]) -> String {
     let max_prob = win_probs.iter().cloned().fold(0.0_f64, f64::max);
     let mut winners = Vec::new();
@@ -1380,6 +2262,7 @@ fn summary_from_leaf(stats: &LeafStats, colors: &[String], workers_used: usize) 
         avg_vps_by_player: avg_vps,
         avg_turns,
         winner_label,
+        leader_win_conditions: LeaderWinConditionSummary::default(),
         workers_used,
         wall_time_sec: 0.0,
         cpu_time_sec: 0.0,
@@ -1398,6 +2281,7 @@ fn dry_run_summary(colors: &[String]) -> PlayoutSummary {
         avg_vps_by_player: [0.0; PLAYER_COUNT],
         avg_turns: 0.0,
         winner_label,
+        leader_win_conditions: LeaderWinConditionSummary::default(),
         workers_used: 0,
         wall_time_sec: 0.0,
         cpu_time_sec: 0.0,
@@ -1413,6 +2297,7 @@ fn summarize_playouts(
     workers: usize,
     colors: &[String],
     max_turns: u32,
+    leader: Option<PlayerId>,
 ) -> PlayoutSummary {
     let worker_count = effective_workers(workers, seeds.len());
     let wall_start = Instant::now();
@@ -1425,6 +2310,7 @@ fn summarize_playouts(
         seeds,
         worker_count,
         max_turns,
+        leader,
     );
     let wall_time = wall_start.elapsed().as_secs_f64();
     let cpu_time = wall_time;
@@ -1433,12 +2319,14 @@ fn summarize_playouts(
     let avg_vps = average_vps_from_totals(&aggregate.total_vps, aggregate.samples);
     let avg_turns = average_turns_from_total(aggregate.total_turns, aggregate.samples);
     let winner_label = dominant_winner_label(colors, &win_probs);
+    let leader_win_conditions = leader_win_condition_summary(&aggregate);
 
     PlayoutSummary {
         win_probabilities: win_probs,
         avg_vps_by_player: avg_vps,
         avg_turns,
         winner_label,
+        leader_win_conditions,
         workers_used: worker_count,
         wall_time_sec: wall_time,
         cpu_time_sec: cpu_time,
@@ -1461,6 +2349,7 @@ fn summarize_with_followers(
     leader_branch_index: usize,
     all_sims_entries: &mut Option<Vec<AllSimsEntry>>,
 ) -> PlayoutSummary {
+    let leader_player = Some(color_to_player(colors, &leader.color));
     let mut prefix = Vec::new();
     summarize_followers_recursive(
         board,
@@ -1474,9 +2363,11 @@ fn summarize_with_followers(
         colors,
         max_turns,
         leader,
+        leader_player,
         leader_branch_index,
         &mut prefix,
         all_sims_entries,
+        None,
     )
 }
 
@@ -1500,10 +2391,20 @@ fn summarize_with_followers_pruned(
     holdout_rerun: bool,
     pooled_red_counts: Option<&RedPooledCounts>,
     red_pool_out: Option<&mut RedPooledCounts>,
+    holdout_targets: Option<&HoldoutTargets>,
 ) -> PlayoutSummary {
+    let leader_player = Some(color_to_player(colors, &leader.color));
     if followers.is_empty() {
         return summarize_playouts(
-            board, state, road_state, army_state, seeds, workers, colors, max_turns,
+            board,
+            state,
+            road_state,
+            army_state,
+            seeds,
+            workers,
+            colors,
+            max_turns,
+            leader_player,
         );
     }
     if followers.len() > 2 {
@@ -1520,9 +2421,11 @@ fn summarize_with_followers_pruned(
             colors,
             max_turns,
             leader,
+            leader_player,
             leader_branch_index,
             &mut prefix,
             all_sims_entries,
+            holdout_targets,
         );
     }
 
@@ -1544,7 +2447,15 @@ fn summarize_with_followers_pruned(
         );
         if red_tree.branches.is_empty() {
             return summarize_playouts(
-                board, state, road_state, army_state, seeds, workers, colors, max_turns,
+                board,
+                state,
+                road_state,
+                army_state,
+                seeds,
+                workers,
+                colors,
+                max_turns,
+                leader_player,
             );
         }
 
@@ -1679,6 +2590,7 @@ fn summarize_with_followers_pruned(
                     workers,
                     colors,
                     max_turns,
+                    leader_player,
                 ),
                 seeds.len() as u64,
             )
@@ -1689,16 +2601,18 @@ fn summarize_with_followers_pruned(
             )
         };
 
-        if let Some(entries) = all_sims_entries.as_mut() {
-            entries.push(AllSimsEntry {
-                leader_branch_index,
-                leader: leader.clone(),
-                leader_second: None,
-                followers: vec![chosen.action.clone()],
-                summary: summary.clone(),
-                sims_run: holdout_sims_run,
-                source: "holdout".to_string(),
-            });
+        if should_emit_holdout_entry(holdout_targets, leader_branch_index, leader, None) {
+            if let Some(entries) = all_sims_entries.as_mut() {
+                entries.push(AllSimsEntry {
+                    leader_branch_index,
+                    leader: leader.clone(),
+                    leader_second: None,
+                    followers: vec![chosen.action.clone()],
+                    summary: summary.clone(),
+                    sims_run: holdout_sims_run,
+                    source: "holdout".to_string(),
+                });
+            }
         }
         if let Some(out) = red_pool_out {
             out.clear();
@@ -1723,7 +2637,15 @@ fn summarize_with_followers_pruned(
     );
     if blue_tree.branches.is_empty() {
         return summarize_playouts(
-            board, state, road_state, army_state, seeds, workers, colors, max_turns,
+            board,
+            state,
+            road_state,
+            army_state,
+            seeds,
+            workers,
+            colors,
+            max_turns,
+            leader_player,
         );
     }
 
@@ -1981,6 +2903,7 @@ fn summarize_with_followers_pruned(
                 workers,
                 colors,
                 max_turns,
+                leader_player,
             ),
             seeds.len() as u64,
         )
@@ -1991,16 +2914,18 @@ fn summarize_with_followers_pruned(
         )
     };
 
-    if let Some(entries) = all_sims_entries.as_mut() {
-        entries.push(AllSimsEntry {
-            leader_branch_index,
-            leader: leader.clone(),
-            leader_second: None,
-            followers: vec![chosen_blue.action.clone(), chosen_red.action.clone()],
-            summary: summary.clone(),
-            sims_run: holdout_sims_run,
-            source: "holdout".to_string(),
-        });
+    if should_emit_holdout_entry(holdout_targets, leader_branch_index, leader, None) {
+        if let Some(entries) = all_sims_entries.as_mut() {
+            entries.push(AllSimsEntry {
+                leader_branch_index,
+                leader: leader.clone(),
+                leader_second: None,
+                followers: vec![chosen_blue.action.clone(), chosen_red.action.clone()],
+                summary: summary.clone(),
+                sims_run: holdout_sims_run,
+                source: "holdout".to_string(),
+            });
+        }
     }
     if let Some(out) = red_pool_out {
         *out =
@@ -2021,24 +2946,36 @@ fn summarize_followers_recursive(
     colors: &[String],
     max_turns: u32,
     leader: &PlacementAction,
+    leader_player: Option<PlayerId>,
     leader_branch_index: usize,
     prefix: &mut Vec<PlacementAction>,
     all_sims_entries: &mut Option<Vec<AllSimsEntry>>,
+    holdout_targets: Option<&HoldoutTargets>,
 ) -> PlayoutSummary {
     if followers.is_empty() {
         let summary = summarize_playouts(
-            board, state, road_state, army_state, seeds, workers, colors, max_turns,
+            board,
+            state,
+            road_state,
+            army_state,
+            seeds,
+            workers,
+            colors,
+            max_turns,
+            leader_player,
         );
-        if let Some(entries) = all_sims_entries.as_mut() {
-            entries.push(AllSimsEntry {
-                leader_branch_index,
-                leader: leader.clone(),
-                leader_second: None,
-                followers: prefix.clone(),
-                summary: summary.clone(),
-                sims_run: seeds.len() as u64,
-                source: "holdout".to_string(),
-            });
+        if should_emit_holdout_entry(holdout_targets, leader_branch_index, leader, None) {
+            if let Some(entries) = all_sims_entries.as_mut() {
+                entries.push(AllSimsEntry {
+                    leader_branch_index,
+                    leader: leader.clone(),
+                    leader_second: None,
+                    followers: prefix.clone(),
+                    summary: summary.clone(),
+                    sims_run: seeds.len() as u64,
+                    source: "holdout".to_string(),
+                });
+            }
         }
         return summary;
     }
@@ -2058,9 +2995,11 @@ fn summarize_followers_recursive(
             colors,
             max_turns,
             leader,
+            leader_player,
             leader_branch_index,
             prefix,
             all_sims_entries,
+            holdout_targets,
         );
     }
 
@@ -2125,9 +3064,11 @@ fn summarize_followers_recursive(
                 colors,
                 max_turns,
                 leader,
+                leader_player,
                 leader_branch_index,
                 prefix,
                 all_sims_entries,
+                holdout_targets,
             );
             prefix.pop();
 
@@ -2144,7 +3085,15 @@ fn summarize_followers_recursive(
 
     best_summary.unwrap_or_else(|| {
         summarize_playouts(
-            board, state, road_state, army_state, seeds, workers, colors, max_turns,
+            board,
+            state,
+            road_state,
+            army_state,
+            seeds,
+            workers,
+            colors,
+            max_turns,
+            leader_player,
         )
     })
 }
@@ -2169,11 +3118,12 @@ fn run_playouts(
     seeds: &[u64],
     workers: usize,
     max_turns: u32,
+    leader: Option<PlayerId>,
 ) -> PlayoutAggregate {
     if workers <= 1 || seeds.len() <= 1 {
         let mut scratch_state = state.clone();
         let players = std::array::from_fn(|_| FastValueFunctionPlayer::new(None, None));
-        let mut aggregate = PlayoutAggregate::default();
+        let mut aggregate = PlayoutAggregate::with_leader(leader);
         for seed in seeds {
             let result = simulate_from_state_with_scratch(
                 board,
@@ -2203,7 +3153,7 @@ fn run_playouts(
             .map(|chunk| {
                 let mut scratch_state = state.clone();
                 let players = std::array::from_fn(|_| FastValueFunctionPlayer::new(None, None));
-                let mut aggregate = PlayoutAggregate::default();
+                let mut aggregate = PlayoutAggregate::with_leader(leader);
                 for seed in chunk {
                     let result = simulate_from_state_with_scratch(
                         board,
@@ -2223,17 +3173,20 @@ fn run_playouts(
                 }
                 aggregate
             })
-            .reduce(PlayoutAggregate::default, |mut acc, part| {
-                acc.merge(&part);
-                acc
-            });
+            .reduce(
+                || PlayoutAggregate::with_leader(leader),
+                |mut acc, part| {
+                    acc.merge(&part);
+                    acc
+                },
+            );
     }
 
     #[cfg(not(feature = "parallel"))]
     {
         let mut scratch_state = state.clone();
         let players = std::array::from_fn(|_| FastValueFunctionPlayer::new(None, None));
-        let mut aggregate = PlayoutAggregate::default();
+        let mut aggregate = PlayoutAggregate::with_leader(leader);
         for seed in seeds {
             let result = simulate_from_state_with_scratch(
                 board,
@@ -3552,6 +4505,7 @@ fn evaluate_branch_task(
     holdout_rerun: bool,
     include_ts_entries: bool,
     pooled_red_counts: Option<&RedPooledCounts>,
+    holdout_targets: Option<&HoldoutTargets>,
 ) -> BranchResult {
     #[cfg(not(feature = "stackelberg_pruning"))]
     touch_stackelberg_config(stackelberg);
@@ -3559,6 +4513,8 @@ fn evaluate_branch_task(
     let _ = pooled_red_counts;
     #[cfg(not(feature = "stackelberg_pruning"))]
     let _ = include_ts_entries;
+    #[cfg(not(feature = "stackelberg_pruning"))]
+    let _ = holdout_targets;
     let mut branch_state = base_state.clone();
     let mut branch_road = base_road;
     let mut branch_army = base_army;
@@ -3616,6 +4572,7 @@ fn evaluate_branch_task(
             workers,
             colors,
             max_turns,
+            Some(task.player),
         )
     } else {
         #[cfg(feature = "stackelberg_pruning")]
@@ -3639,6 +4596,7 @@ fn evaluate_branch_task(
                 holdout_rerun,
                 pooled_red_counts,
                 Some(&mut red_pool_stats),
+                holdout_targets,
             )
         }
         #[cfg(not(feature = "stackelberg_pruning"))]
@@ -3846,6 +4804,7 @@ fn evaluate_white12_task(
     stackelberg: &StackelbergConfig,
     holdout_rerun: bool,
     include_ts_entries: bool,
+    holdout_targets: Option<&HoldoutTargets>,
 ) -> BranchResult {
     let player = task.player;
     let target_player = sort_color_idx as PlayerId;
@@ -3876,7 +4835,15 @@ fn evaluate_white12_task(
 
     if roads_a.is_empty() || roads_b.is_empty() {
         let summary = summarize_playouts(
-            board, base_state, base_road, base_army, seeds, workers, colors, max_turns,
+            board,
+            base_state,
+            base_road,
+            base_army,
+            seeds,
+            workers,
+            colors,
+            max_turns,
+            Some(player),
         );
         return BranchResult {
             evaluation: BranchEvaluation {
@@ -4059,7 +5026,6 @@ fn evaluate_white12_task(
                     if stats.samples == 0 {
                         continue;
                     }
-                    let summary = summary_from_leaf(stats, colors, workers);
                     let leader_action = PlacementAction {
                         color: leader_color.clone(),
                         settlement: order.first_settlement,
@@ -4070,6 +5036,15 @@ fn evaluate_white12_task(
                         settlement: order.second_settlement,
                         road: order.second_roads[_road2_idx].edge_nodes,
                     };
+                    if !should_emit_holdout_entry(
+                        holdout_targets,
+                        task.branch_index,
+                        &leader_action,
+                        Some(&leader_second_action),
+                    ) {
+                        continue;
+                    }
+                    let summary = summary_from_leaf(stats, colors, workers);
                     all_sims_entries.push(AllSimsEntry {
                         leader_branch_index: task.branch_index,
                         leader: leader_action,
@@ -4111,6 +5086,7 @@ fn evaluate_white12_task(
             workers,
             colors,
             max_turns,
+            Some(player),
         )
     } else {
         summary_from_leaf(chosen_stats, colors, workers)
@@ -4119,6 +5095,24 @@ fn evaluate_white12_task(
     for (order_idx, order) in orders.iter().enumerate() {
         for road1_idx in 0..order.first_roads.len() {
             for road2_idx in 0..order.second_roads.len() {
+                let leader_action = PlacementAction {
+                    color: leader_color.clone(),
+                    settlement: order.first_settlement,
+                    road: order.first_roads[road1_idx].edge_nodes,
+                };
+                let leader_second_action = PlacementAction {
+                    color: leader_color.clone(),
+                    settlement: order.second_settlement,
+                    road: order.second_roads[road2_idx].edge_nodes,
+                };
+                if !should_emit_holdout_entry(
+                    holdout_targets,
+                    task.branch_index,
+                    &leader_action,
+                    Some(&leader_second_action),
+                ) {
+                    continue;
+                }
                 let hold_summary = if holdout_rerun {
                     let prepared = &prepared_states[order_idx][road1_idx][road2_idx];
                     summarize_playouts(
@@ -4130,6 +5124,7 @@ fn evaluate_white12_task(
                         workers,
                         colors,
                         max_turns,
+                        Some(player),
                     )
                 } else {
                     summary_from_leaf(
@@ -4137,16 +5132,6 @@ fn evaluate_white12_task(
                         colors,
                         workers,
                     )
-                };
-                let leader_action = PlacementAction {
-                    color: leader_color.clone(),
-                    settlement: order.first_settlement,
-                    road: order.first_roads[road1_idx].edge_nodes,
-                };
-                let leader_second_action = PlacementAction {
-                    color: leader_color.clone(),
-                    settlement: order.second_settlement,
-                    road: order.second_roads[road2_idx].edge_nodes,
                 };
                 let sims_run = if holdout_rerun {
                     seeds.len() as u64
@@ -4324,6 +5309,7 @@ fn evaluate_white12_task(
     _stackelberg: &StackelbergConfig,
     _holdout_rerun: bool,
     _include_ts_entries: bool,
+    _holdout_targets: Option<&HoldoutTargets>,
 ) -> BranchResult {
     panic!("white12 requires stackelberg_pruning feature");
 }
@@ -4384,6 +5370,7 @@ fn evaluate_white12_tasks(
     stackelberg: &StackelbergConfig,
     holdout_rerun: bool,
     include_ts_entries: bool,
+    holdout_targets: Option<&HoldoutTargets>,
 ) -> Vec<BranchResult> {
     if workers <= 1 || tasks.len() <= 1 {
         return tasks
@@ -4404,6 +5391,7 @@ fn evaluate_white12_tasks(
                     stackelberg,
                     holdout_rerun,
                     include_ts_entries,
+                    holdout_targets,
                 )
             })
             .collect();
@@ -4430,6 +5418,7 @@ fn evaluate_white12_tasks(
                     stackelberg,
                     holdout_rerun,
                     include_ts_entries,
+                    holdout_targets,
                 )
             })
             .collect();
@@ -4455,6 +5444,7 @@ fn evaluate_white12_tasks(
                     stackelberg,
                     holdout_rerun,
                     include_ts_entries,
+                    holdout_targets,
                 )
             })
             .collect()
@@ -4508,6 +5498,7 @@ fn evaluate_branch_tasks(
     stackelberg: &StackelbergConfig,
     holdout_rerun: bool,
     include_ts_entries: bool,
+    holdout_targets: Option<&HoldoutTargets>,
 ) -> Vec<BranchResult> {
     #[cfg(feature = "stackelberg_pruning")]
     {
@@ -4544,6 +5535,7 @@ fn evaluate_branch_tasks(
                         holdout_rerun,
                         include_ts_entries,
                         Some(&global_pool),
+                        holdout_targets,
                     );
                     merge_red_pool_counts(&mut global_pool, &result.red_pool_stats);
                     results_by_branch.insert(task.branch_index, result);
@@ -4569,6 +5561,7 @@ fn evaluate_branch_tasks(
                         holdout_rerun,
                         include_ts_entries,
                         pooled_snapshot.as_ref(),
+                        holdout_targets,
                     );
                     let pool_entry = pools_by_settlement
                         .entry(task.settlement_node)
@@ -4610,6 +5603,7 @@ fn evaluate_branch_tasks(
                     holdout_rerun,
                     include_ts_entries,
                     None,
+                    holdout_targets,
                 )
             })
             .collect();
@@ -4638,6 +5632,7 @@ fn evaluate_branch_tasks(
                     holdout_rerun,
                     include_ts_entries,
                     None,
+                    holdout_targets,
                 )
             })
             .collect();
@@ -4665,6 +5660,7 @@ fn evaluate_branch_tasks(
                     holdout_rerun,
                     include_ts_entries,
                     None,
+                    holdout_targets,
                 )
             })
             .collect()
@@ -4790,21 +5786,25 @@ mod playout_aggregation_tests {
                 winner: Some(0),
                 vps_by_player: [10, 8, 6, 4],
                 num_turns: 50,
+                leader_win_breakdown: None,
             },
             PlayoutResult {
                 winner: Some(2),
                 vps_by_player: [7, 6, 10, 5],
                 num_turns: 40,
+                leader_win_breakdown: None,
             },
             PlayoutResult {
                 winner: None,
                 vps_by_player: [9, 7, 9, 6],
                 num_turns: 60,
+                leader_win_breakdown: None,
             },
             PlayoutResult {
                 winner: Some(2),
                 vps_by_player: [6, 5, 10, 8],
                 num_turns: 45,
+                leader_win_breakdown: None,
             },
         ]
     }
@@ -4856,6 +5856,89 @@ mod playout_aggregation_tests {
         assert_eq!(left.wins, full.wins);
         assert_eq!(left.total_vps, full.total_vps);
     }
+
+    #[test]
+    fn leader_win_condition_summary_only_counts_leader_wins() {
+        let results = vec![
+            PlayoutResult {
+                winner: Some(2),
+                vps_by_player: [8, 8, 10, 6],
+                num_turns: 40,
+                leader_win_breakdown: Some(LeaderWinBreakdown {
+                    settlements_built: 1,
+                    cities_built: 1,
+                    vp_cards: 2,
+                    had_lr: true,
+                    had_la: false,
+                    played_monopoly: true,
+                    played_yop: false,
+                    played_road_builder: true,
+                    knights_played: 3,
+                    first_turn_settlement: Some(12),
+                    first_turn_city: Some(15),
+                }),
+            },
+            PlayoutResult {
+                winner: Some(1),
+                vps_by_player: [6, 10, 8, 5],
+                num_turns: 38,
+                leader_win_breakdown: Some(LeaderWinBreakdown {
+                    settlements_built: 2,
+                    cities_built: 0,
+                    vp_cards: 0,
+                    had_lr: false,
+                    had_la: true,
+                    played_monopoly: false,
+                    played_yop: false,
+                    played_road_builder: false,
+                    knights_played: 1,
+                    first_turn_settlement: Some(8),
+                    first_turn_city: None,
+                }),
+            },
+            PlayoutResult {
+                winner: Some(2),
+                vps_by_player: [7, 6, 10, 5],
+                num_turns: 35,
+                leader_win_breakdown: Some(LeaderWinBreakdown {
+                    settlements_built: 0,
+                    cities_built: 0,
+                    vp_cards: 0,
+                    had_lr: false,
+                    had_la: true,
+                    played_monopoly: false,
+                    played_yop: false,
+                    played_road_builder: false,
+                    knights_played: 0,
+                    first_turn_settlement: None,
+                    first_turn_city: None,
+                }),
+            },
+        ];
+
+        let mut aggregate = PlayoutAggregate::with_leader(Some(2));
+        for result in &results {
+            aggregate.update(result);
+        }
+        let stats = leader_win_condition_summary(&aggregate);
+
+        assert_eq!(stats.pct_has_settlement, 50.0);
+        assert_eq!(stats.avg_settlements, 0.5);
+        assert_eq!(stats.avg_cities, 0.5);
+        assert_eq!(stats.pct_has_city, 50.0);
+        assert_eq!(stats.pct_has_vp, 50.0);
+        assert_eq!(stats.avg_vp_given_has, 2.0);
+        assert_eq!(stats.pct_la, 50.0);
+        assert_eq!(stats.pct_lr, 50.0);
+        assert_eq!(stats.pct_both, 0.0);
+        assert_eq!(stats.pct_played_monopoly, 50.0);
+        assert_eq!(stats.pct_played_yop, 0.0);
+        assert_eq!(stats.pct_played_road_builder, 50.0);
+        assert_eq!(stats.pct_played_knights, 50.0);
+        assert_eq!(stats.avg_knights_given_played, 3.0);
+        assert_eq!(stats.avg_turn_first_city, 15.0);
+        assert_eq!(stats.avg_turn_first_settlement, 12.0);
+    }
 }
 
 #[cfg(all(test, feature = "stackelberg_pruning"))]
@@ -4902,6 +5985,7 @@ mod tests {
             winner: Some(1),
             vps_by_player: [0, 10, 0, 0],
             num_turns: 30,
+            leader_win_breakdown: None,
         };
         stats.update(&result, 1, Some(2));
         assert_eq!(stats.samples, 1);
@@ -4985,6 +6069,7 @@ mod tests {
             &stackelberg,
             false,
             false,
+            None,
         );
 
         let holdout_entries: Vec<&AllSimsEntry> = result
@@ -5039,6 +6124,68 @@ mod tests {
                 .collect();
         assert_eq!(unique_combos.len(), expected_combo_count);
     }
+
+    #[test]
+    fn holdout_sort_orders_by_leader_color_win_rate_desc() {
+        let colors = vec![
+            "WHITE".to_string(),
+            "ORANGE".to_string(),
+            "BLUE".to_string(),
+            "RED".to_string(),
+        ];
+        let summary = |wins: [f64; PLAYER_COUNT]| PlayoutSummary {
+            win_probabilities: wins,
+            avg_vps_by_player: [0.0; PLAYER_COUNT],
+            avg_turns: 0.0,
+            winner_label: String::new(),
+            leader_win_conditions: LeaderWinConditionSummary::default(),
+            workers_used: 1,
+            wall_time_sec: 0.0,
+            cpu_time_sec: 0.0,
+        };
+        let entry = |branch_index: usize,
+                     leader_color: &str,
+                     leader_settlement: NodeId,
+                     leader_road: (NodeId, NodeId),
+                     wins: [f64; PLAYER_COUNT]| AllSimsEntry {
+            leader_branch_index: branch_index,
+            leader: PlacementAction {
+                color: leader_color.to_string(),
+                settlement: leader_settlement,
+                road: leader_road,
+            },
+            leader_second: None,
+            followers: Vec::new(),
+            summary: summary(wins),
+            sims_run: 10,
+            source: "holdout".to_string(),
+        };
+
+        let mut entries = vec![
+            entry(1, "WHITE", 11, (11, 12), [42.0, 8.0, 25.0, 25.0]),
+            entry(3, "ORANGE", 13, (13, 14), [15.0, 57.0, 10.0, 18.0]),
+            entry(2, "WHITE", 12, (12, 13), [68.0, 5.0, 20.0, 7.0]),
+        ];
+        sort_holdout_entries_by_leader_win_rate(&mut entries, &colors);
+
+        let ordered_rates: Vec<(String, f64)> = entries
+            .iter()
+            .map(|entry| {
+                (
+                    entry.leader.color.clone(),
+                    leader_color_win_rate(entry, &colors),
+                )
+            })
+            .collect();
+        assert_eq!(
+            ordered_rates,
+            vec![
+                ("WHITE".to_string(), 68.0),
+                ("ORANGE".to_string(), 57.0),
+                ("WHITE".to_string(), 42.0),
+            ]
+        );
+    }
 }
 
 fn all_sims_headers(colors: &[String]) -> Vec<String> {
@@ -5077,6 +6224,33 @@ fn all_sims_headers(colors: &[String]) -> Vec<String> {
     for color in colors {
         headers.push(format!("AVG_VP_{color}"));
     }
+    headers
+}
+
+fn holdout_leader_win_condition_headers(leader_color: &str) -> Vec<String> {
+    vec![
+        format!("WIN_{leader_color}_PCT_HAS_SETTLEMENT"),
+        format!("WIN_{leader_color}_AVG_SETTLEMENTS"),
+        format!("WIN_{leader_color}_AVG_CITIES"),
+        format!("WIN_{leader_color}_PCT_HAS_CITY"),
+        format!("WIN_{leader_color}_PCT_HAS_VP"),
+        format!("WIN_{leader_color}_AVG_VP_GIVEN_HAS"),
+        format!("WIN_{leader_color}_PCT_LA"),
+        format!("WIN_{leader_color}_PCT_LR"),
+        format!("WIN_{leader_color}_PCT_BOTH"),
+        format!("WIN_{leader_color}_PCT_PLAYED_MONOPOLY"),
+        format!("WIN_{leader_color}_PCT_PLAYED_YOP"),
+        format!("WIN_{leader_color}_PCT_PLAYED_ROAD_BUILDER"),
+        format!("WIN_{leader_color}_PCT_PLAYED_KNIGHTS"),
+        format!("WIN_{leader_color}_AVG_KNIGHTS_GIVEN_PLAYED"),
+        format!("WIN_{leader_color}_AVG_TURN_FIRST_CITY"),
+        format!("WIN_{leader_color}_AVG_TURN_FIRST_SETTLEMENT"),
+    ]
+}
+
+fn all_sims_holdout_headers(colors: &[String], leader_color: &str) -> Vec<String> {
+    let mut headers = all_sims_headers(colors);
+    headers.extend(holdout_leader_win_condition_headers(leader_color));
     headers
 }
 
@@ -5215,6 +6389,38 @@ fn all_sims_row(entry: &AllSimsEntry, colors: &[String], context: &RunContext) -
     row
 }
 
+fn append_leader_win_condition_values(row: &mut Vec<String>, summary: &PlayoutSummary) {
+    let stats = &summary.leader_win_conditions;
+    row.extend_from_slice(&[
+        format!("{:.1}", stats.pct_has_settlement),
+        format!("{:.2}", stats.avg_settlements),
+        format!("{:.2}", stats.avg_cities),
+        format!("{:.1}", stats.pct_has_city),
+        format!("{:.1}", stats.pct_has_vp),
+        format!("{:.2}", stats.avg_vp_given_has),
+        format!("{:.1}", stats.pct_la),
+        format!("{:.1}", stats.pct_lr),
+        format!("{:.1}", stats.pct_both),
+        format!("{:.1}", stats.pct_played_monopoly),
+        format!("{:.1}", stats.pct_played_yop),
+        format!("{:.1}", stats.pct_played_road_builder),
+        format!("{:.1}", stats.pct_played_knights),
+        format!("{:.2}", stats.avg_knights_given_played),
+        format!("{:.2}", stats.avg_turn_first_city),
+        format!("{:.2}", stats.avg_turn_first_settlement),
+    ]);
+}
+
+fn all_sims_holdout_row(
+    entry: &AllSimsEntry,
+    colors: &[String],
+    context: &RunContext,
+) -> Vec<String> {
+    let mut row = all_sims_row(entry, colors, context);
+    append_leader_win_condition_values(&mut row, &entry.summary);
+    row
+}
+
 fn action_sort_key(action: Option<&PlacementAction>) -> (String, NodeId, NodeId, NodeId) {
     if let Some(action) = action {
         (
@@ -5228,29 +6434,50 @@ fn action_sort_key(action: Option<&PlacementAction>) -> (String, NodeId, NodeId,
     }
 }
 
+fn all_sims_entry_sort_key(
+    entry: &AllSimsEntry,
+) -> (
+    usize,
+    (NodeId, NodeId, NodeId),
+    (String, NodeId, NodeId, NodeId),
+    (String, NodeId, NodeId, NodeId),
+    (String, NodeId, NodeId, NodeId),
+    (String, NodeId, NodeId, NodeId),
+) {
+    (
+        entry.leader_branch_index,
+        (
+            entry.leader.settlement,
+            entry.leader.road.0,
+            entry.leader.road.1,
+        ),
+        action_sort_key(entry.leader_second.as_ref()),
+        action_sort_key(entry.followers.get(0)),
+        action_sort_key(entry.followers.get(1)),
+        action_sort_key(entry.followers.get(2)),
+    )
+}
+
 fn sort_all_sims_entries(entries: &mut Vec<AllSimsEntry>) {
+    entries.sort_by_key(all_sims_entry_sort_key);
+}
+
+fn leader_color_win_rate(entry: &AllSimsEntry, colors: &[String]) -> f64 {
+    colors
+        .iter()
+        .position(|color| color == &entry.leader.color)
+        .map(|idx| entry.summary.win_probabilities[idx])
+        .unwrap_or(f64::NEG_INFINITY)
+}
+
+fn sort_holdout_entries_by_leader_win_rate(entries: &mut Vec<AllSimsEntry>, colors: &[String]) {
     entries.sort_by(|a, b| {
-        let a_leader2 = action_sort_key(a.leader_second.as_ref());
-        let b_leader2 = action_sort_key(b.leader_second.as_ref());
-        let a_key1 = action_sort_key(a.followers.get(0));
-        let b_key1 = action_sort_key(b.followers.get(0));
-        let a_key2 = action_sort_key(a.followers.get(1));
-        let b_key2 = action_sort_key(b.followers.get(1));
-        let a_key3 = action_sort_key(a.followers.get(2));
-        let b_key3 = action_sort_key(b.followers.get(2));
-        a.leader_branch_index
-            .cmp(&b.leader_branch_index)
-            .then_with(|| {
-                (a.leader.settlement, a.leader.road.0, a.leader.road.1).cmp(&(
-                    b.leader.settlement,
-                    b.leader.road.0,
-                    b.leader.road.1,
-                ))
-            })
-            .then_with(|| a_leader2.cmp(&b_leader2))
-            .then_with(|| a_key1.cmp(&b_key1))
-            .then_with(|| a_key2.cmp(&b_key2))
-            .then_with(|| a_key3.cmp(&b_key3))
+        let a_win = leader_color_win_rate(a, colors);
+        let b_win = leader_color_win_rate(b, colors);
+        b_win
+            .partial_cmp(&a_win)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| all_sims_entry_sort_key(a).cmp(&all_sims_entry_sort_key(b)))
     });
 }
 
@@ -5275,6 +6502,7 @@ fn utc_timestamp() -> String {
 
 fn main() {
     let mut args = parse_args();
+    set_endgame_gap_enabled(!args.no_endgame_gap);
     let (actions, colors, current_color) = load_actions(&args.state_path);
     if !args.blue2 && !args.orange2 && !args.white12 {
         if let Some(color) = current_color.as_deref() {
@@ -5323,6 +6551,37 @@ fn main() {
         Vec::new()
     };
     let is_stackelberg = !followers.is_empty() || args.white12;
+    if args.holdout_targets.is_some() && !is_stackelberg {
+        eprintln!("--holdout-targets requires stackelberg mode (--blue2, --orange2, or --white12)");
+        std::process::exit(2);
+    }
+    if args.holdout_replay.is_some() && !is_stackelberg {
+        eprintln!("--holdout-replay requires stackelberg mode (--blue2, --orange2, or --white12)");
+        std::process::exit(2);
+    }
+    let holdout_targets = args
+        .holdout_targets
+        .as_ref()
+        .map(|path| load_holdout_targets(path));
+    let mut holdout_replay_rows = args
+        .holdout_replay
+        .as_ref()
+        .map(|path| load_holdout_replay_rows(path));
+    if let (Some(targets), Some(rows)) = (holdout_targets.as_ref(), holdout_replay_rows.as_mut()) {
+        rows.retain(|row| {
+            targets.contains_leader_key(
+                row.leader_branch_index,
+                row.leader.settlement,
+                row.leader.road,
+                row.leader_second.as_ref().map(|action| action.settlement),
+                row.leader_second.as_ref().map(|action| action.road),
+            )
+        });
+        if rows.is_empty() {
+            eprintln!("--holdout-replay rows were fully filtered out by --holdout-targets");
+            std::process::exit(2);
+        }
+    }
     let include_ts_entries = !args.holdout_only;
     let all_sims_output = if is_stackelberg {
         Some(
@@ -5338,6 +6597,15 @@ fn main() {
         .clone()
         .unwrap_or_else(|| colors.get(0).cloned().unwrap_or_else(|| "RED".to_string()));
     let sort_color_idx = colors.iter().position(|c| c == &sort_color).unwrap_or(0);
+    let holdout_leader_color = if args.white12 {
+        "WHITE".to_string()
+    } else if args.orange2 {
+        "ORANGE".to_string()
+    } else if args.blue2 {
+        "BLUE".to_string()
+    } else {
+        sort_color.clone()
+    };
 
     let white_player = if args.white12 {
         Some(color_to_player(&colors, "WHITE"))
@@ -5370,96 +6638,123 @@ fn main() {
         init_global_pool(args.workers);
     }
 
-    let results = if let Some(player) = white_player {
-        let white_tasks = build_white12_tasks(
+    let (mut branches, mut all_sims_entries) = if let Some(rows) = holdout_replay_rows.as_ref() {
+        summarize_holdout_replay_rows(
             &board,
             &base_state,
             base_road,
             base_army,
             args.seed,
-            args.limit,
-            args.leader_settlement,
-            player,
-        );
-        if args.dry_run {
-            evaluate_white12_tasks_dry_run(
-                &board,
-                &base_state,
-                base_road,
-                base_army,
-                args.seed,
-                &white_tasks,
-                &colors,
-                sort_color_idx,
-            )
-        } else {
-            evaluate_white12_tasks(
-                &board,
-                &base_state,
-                base_road,
-                base_army,
-                args.seed,
-                &white_tasks,
-                &seeds,
-                args.workers,
-                &colors,
-                sort_color_idx,
-                args.max_turns,
-                &stackelberg_config,
-                args.holdout_rerun,
-                include_ts_entries,
-            )
-        }
+            rows,
+            &colors,
+            &seeds,
+            args.start_seed,
+            args.workers,
+            args.max_turns,
+            sort_color_idx,
+            args.dry_run,
+        )
     } else {
-        let tasks = build_branch_tasks(
-            &board,
-            &base_state,
-            base_road,
-            base_army,
-            args.seed,
-            args.limit,
-            args.leader_settlement,
-        );
-        if args.dry_run {
-            evaluate_branch_tasks_dry_run(
+        let results = if let Some(player) = white_player {
+            let mut white_tasks = build_white12_tasks(
                 &board,
                 &base_state,
                 base_road,
                 base_army,
                 args.seed,
-                &tasks,
-                &colors,
-                sort_color_idx,
-                &followers,
-                &stackelberg_config,
-            )
+                args.limit,
+                args.leader_settlement,
+                player,
+            );
+            if let Some(targets) = holdout_targets.as_ref() {
+                white_tasks.retain(|task| targets.contains_branch(task.branch_index));
+            }
+            if args.dry_run {
+                evaluate_white12_tasks_dry_run(
+                    &board,
+                    &base_state,
+                    base_road,
+                    base_army,
+                    args.seed,
+                    &white_tasks,
+                    &colors,
+                    sort_color_idx,
+                )
+            } else {
+                evaluate_white12_tasks(
+                    &board,
+                    &base_state,
+                    base_road,
+                    base_army,
+                    args.seed,
+                    &white_tasks,
+                    &seeds,
+                    args.workers,
+                    &colors,
+                    sort_color_idx,
+                    args.max_turns,
+                    &stackelberg_config,
+                    args.holdout_rerun,
+                    include_ts_entries,
+                    holdout_targets.as_ref(),
+                )
+            }
         } else {
-            evaluate_branch_tasks(
+            let mut tasks = build_branch_tasks(
                 &board,
                 &base_state,
                 base_road,
                 base_army,
                 args.seed,
-                &tasks,
-                &seeds,
-                args.workers,
-                &colors,
-                sort_color_idx,
-                &followers,
-                args.max_turns,
-                &stackelberg_config,
-                args.holdout_rerun,
-                include_ts_entries,
-            )
-        }
-    };
+                args.limit,
+                args.leader_settlement,
+            );
+            if let Some(targets) = holdout_targets.as_ref() {
+                tasks.retain(|task| targets.contains_branch(task.branch_index));
+            }
+            if args.dry_run {
+                evaluate_branch_tasks_dry_run(
+                    &board,
+                    &base_state,
+                    base_road,
+                    base_army,
+                    args.seed,
+                    &tasks,
+                    &colors,
+                    sort_color_idx,
+                    &followers,
+                    &stackelberg_config,
+                )
+            } else {
+                evaluate_branch_tasks(
+                    &board,
+                    &base_state,
+                    base_road,
+                    base_army,
+                    args.seed,
+                    &tasks,
+                    &seeds,
+                    args.workers,
+                    &colors,
+                    sort_color_idx,
+                    &followers,
+                    args.max_turns,
+                    &stackelberg_config,
+                    args.holdout_rerun,
+                    include_ts_entries,
+                    holdout_targets.as_ref(),
+                )
+            }
+        };
 
-    let mut branches = Vec::with_capacity(results.len());
-    let mut all_sims_entries = Vec::new();
-    for result in results {
-        branches.push(result.evaluation);
-        all_sims_entries.extend(result.all_sims_entries);
-    }
+        let mut branches = Vec::with_capacity(results.len());
+        let mut all_sims_entries = Vec::new();
+        for result in results {
+            branches.push(result.evaluation);
+            all_sims_entries.extend(result.all_sims_entries);
+        }
+        (branches, all_sims_entries)
+    };
 
     branches.sort_by(|a, b| {
         b.score
@@ -5491,7 +6786,8 @@ fn main() {
     if let Some(all_sims_path) = all_sims_output {
         let (ts_path, holdout_path) = split_all_sims_outputs(&all_sims_path);
         let mut holdout_entries = Vec::new();
-        let headers = all_sims_headers(&colors);
+        let ts_headers = all_sims_headers(&colors);
+        let holdout_headers = all_sims_holdout_headers(&colors, &holdout_leader_color);
         if args.holdout_only {
             for entry in all_sims_entries.drain(..) {
                 if entry.source != "ts" {
@@ -5511,20 +6807,20 @@ fn main() {
             ensure_parent_dir(&ts_path);
             let mut ts_output =
                 File::create(ts_path).expect("failed to create all sims ts output csv");
-            writeln!(ts_output, "{}", headers.join(",")).expect("failed to write headers");
+            writeln!(ts_output, "{}", ts_headers.join(",")).expect("failed to write headers");
             for entry in &ts_entries {
                 let row = all_sims_row(entry, &colors, &context);
                 writeln!(ts_output, "{}", row.join(",")).expect("failed to write row");
             }
         }
 
-        sort_all_sims_entries(&mut holdout_entries);
+        sort_holdout_entries_by_leader_win_rate(&mut holdout_entries, &colors);
         ensure_parent_dir(&holdout_path);
         let mut holdout_output =
             File::create(holdout_path).expect("failed to create all sims holdout output csv");
-        writeln!(holdout_output, "{}", headers.join(",")).expect("failed to write headers");
+        writeln!(holdout_output, "{}", holdout_headers.join(",")).expect("failed to write headers");
         for entry in &holdout_entries {
-            let row = all_sims_row(entry, &colors, &context);
+            let row = all_sims_holdout_row(entry, &colors, &context);
             writeln!(holdout_output, "{}", row.join(",")).expect("failed to write row");
         }
     }

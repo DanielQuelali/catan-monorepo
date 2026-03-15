@@ -76,6 +76,11 @@ def parse_args() -> argparse.Namespace:
         help="Optional number of samples to run from the index",
     )
     parser.add_argument(
+        "--exclude-sample-ids",
+        default="",
+        help="Comma-separated sample IDs to skip (e.g. 0001,0003)",
+    )
+    parser.add_argument(
         "--holdout-rerun",
         action="store_true",
         help="Use legacy holdout rerun behavior instead of TS-reuse holdout",
@@ -84,6 +89,11 @@ def parse_args() -> argparse.Namespace:
         "--holdout-only",
         action="store_true",
         help="Emit only holdout all-sims CSV output (skip TS output/materialization)",
+    )
+    parser.add_argument(
+        "--no-endgame-gap",
+        action="store_true",
+        help="Disable endgame-gap heuristic term (enabled by default).",
     )
     parser.add_argument(
         "--dry-run",
@@ -183,6 +193,8 @@ def run_sample(
         cmd.append("--holdout-rerun")
     if args.holdout_only:
         cmd.append("--holdout-only")
+    if args.no_endgame_gap:
+        cmd.append("--no-endgame-gap")
     if args.limit is not None:
         cmd.extend(["--limit", str(args.limit)])
 
@@ -228,6 +240,15 @@ def main() -> int:
 
     index_dir = index_path.parent
     samples = load_samples(index_path)
+    exclude_sample_ids = {
+        sid.strip() for sid in args.exclude_sample_ids.split(",") if sid.strip()
+    }
+    if exclude_sample_ids:
+        samples = [
+            sample
+            for idx, sample in enumerate(samples)
+            if sample_id(sample, idx) not in exclude_sample_ids
+        ]
 
     if args.sample_limit is not None:
         samples = samples[: max(0, args.sample_limit)]

@@ -219,6 +219,18 @@ fn check_winner(state: &State, road_state: &RoadState, army_state: &ArmyState) -
     None
 }
 
+#[inline]
+fn action_may_change_points(kind: &ValueActionKind) -> bool {
+    matches!(
+        kind,
+        ValueActionKind::BuildSettlement(_)
+            | ValueActionKind::BuildRoad(_)
+            | ValueActionKind::BuildCity(_)
+            | ValueActionKind::PlayKnight
+            | ValueActionKind::BuyDevCard
+    )
+}
+
 fn select_winner(state: &State, road_state: &RoadState, army_state: &ArmyState) -> PlayerId {
     let points = player_points(state, road_state, army_state);
     let mut best_player = 0;
@@ -265,8 +277,10 @@ fn simulate_from_state(
             rng,
         );
 
-        if check_winner(&state, &road_state, &army_state).is_some() {
-            break;
+        if action_may_change_points(&action.kind) {
+            if check_winner(&state, &road_state, &army_state).is_some() {
+                break;
+            }
         }
     }
 

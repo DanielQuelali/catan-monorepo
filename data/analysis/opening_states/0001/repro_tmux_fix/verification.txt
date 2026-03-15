@@ -1,6 +1,0 @@
-base_exists=True
-new_exists=True
-byte_equal=False
-rows_base=10734
-rows_new=10734
-normalized_equal=True

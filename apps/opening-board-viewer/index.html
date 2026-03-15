@@ -16,17 +16,31 @@
       <span class="muted" id="dataPath"></span>
     </div>
 
-    <div class="panel">
+    <div class="panel board-panel">
       <svg id="board" viewBox="0 0 760 620"></svg>
     </div>
 
-    <div class="panel meta">
-      <h3>Board Details</h3>
-      <pre id="metaText"></pre>
-      <h4>Ports (order)</h4>
-      <div class="ports" id="ports"></div>
-      <h4>Opening Placements</h4>
-      <pre id="placementsText">-</pre>
+    <div class="panel holdout-panel">
+      <h4>White Holdout Top 5 Groups</h4>
+      <p class="muted holdout-help">Hover a pick to preview full placements on the board.</p>
+      <div id="holdoutList" class="holdout-list">
+        <p class="muted">-</p>
+      </div>
+    </div>
+
+    <div class="panel accordion-panel">
+      <details open>
+        <summary>Board Details</summary>
+        <pre id="metaText">-</pre>
+      </details>
+      <details>
+        <summary>Ports (order)</summary>
+        <div class="ports" id="ports"></div>
+      </details>
+      <details>
+        <summary>Opening Placements</summary>
+        <pre id="placementsText">-</pre>
+      </details>
     </div>
   </div>
   <script src="/apps/opening-board-viewer/app.js"></script>

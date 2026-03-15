@@ -486,11 +486,19 @@ async function fetchAnalysisText(url) {
   if (!url.endsWith(".gz")) {
     return response.text();
   }
-  if (typeof DecompressionStream === "undefined" || !response.body) {
+
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  const isGzip = bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
+  if (!isGzip) {
+    // Some servers auto-decompress .gz responses; treat payload as plain CSV text.
+    return new TextDecoder().decode(bytes);
+  }
+
+  if (typeof DecompressionStream === "undefined") {
     throw new Error("gzip unsupported");
   }
   const ds = new DecompressionStream("gzip");
-  return new Response(response.body.pipeThrough(ds)).text();
+  return new Response(new Blob([bytes]).stream().pipeThrough(ds)).text();
 }
 
 function buildBoardAnalysis(csvText) {

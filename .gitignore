@@ -14,3 +14,10 @@ data/analysis/
 .env
 .vscode/
 .idea/
+
+# Python/cache
+__pycache__/
+*.pyc
+
+# Local eval outputs
+evals/artifacts/

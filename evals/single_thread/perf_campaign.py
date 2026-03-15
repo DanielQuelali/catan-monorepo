@@ -461,6 +461,12 @@ def first_queue_item(queue: dict[str, Any]) -> dict[str, Any] | None:
     return candidates[0]
 
 
+def queue_item_correctness_status_for_terminalization(item: dict[str, Any]) -> str:
+    if item["status"] in {"queued_for_benchmark", "running_benchmark"}:
+        return "pass"
+    return "skipped"
+
+
 def recover_inflight_states(queue: dict[str, Any]) -> bool:
     changed = False
     for item in queue["items"]:
@@ -1395,6 +1401,25 @@ def command_worker_run(args: argparse.Namespace) -> int:
                             correctness_status="skipped",
                             benchmark_status="skipped",
                             decision_status="stale",
+                        )
+                        processed += 1
+                        if not args.drain:
+                            break
+                        continue
+
+                    candidate_root = Path(item["candidate_worktree"]).resolve()
+                    if not candidate_root.exists():
+                        note = f"candidate worktree missing before {('benchmark' if item['status'] == 'queued_for_benchmark' else 'correctness')}: {candidate_root}"
+                        transition_item(item, "cancelled", note)
+                        atomic_write_json(paths.queue_file, queue)
+                        set_candidate_status(paths, item["candidate_id"], "cancelled", note)
+                        write_terminal_ledger_row(
+                            paths,
+                            metadata,
+                            item,
+                            correctness_status=queue_item_correctness_status_for_terminalization(item),
+                            benchmark_status="skipped",
+                            decision_status="cancelled",
                         )
                         processed += 1
                         if not args.drain:

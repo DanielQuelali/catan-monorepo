@@ -1,0 +1,5 @@
+   Compiling initial-branch-analysis v0.1.0 (/Users/daniel/Projects/catan-monorepo/crates/initial-branch-analysis)
+    Finished `release` profile [optimized] target(s) in 5.25s
+Loaded 11 samples from /Users/daniel/Projects/catan-monorepo/data/opening_states/index.json
+[1] sample=0002 state=states/state_0002.json board=boards/board_0002.json
+[2] sample=0003 state=states/state_0003.json board=boards/board_0003.json

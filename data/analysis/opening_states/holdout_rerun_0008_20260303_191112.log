@@ -1,0 +1,7 @@
+    Finished `release` profile [optimized] target(s) in 0.19s
+Loaded 1 samples from /Users/daniel/Projects/catan-monorepo/data/opening_states/index.json
+[1] sample=0008 state=states/state_0008.json board=boards/board_0008.json
+Completed 1 samples. Outputs under /Users/daniel/Projects/catan-monorepo/data/analysis/opening_states
+real 1884.38
+user 28099.88
+sys 532.32

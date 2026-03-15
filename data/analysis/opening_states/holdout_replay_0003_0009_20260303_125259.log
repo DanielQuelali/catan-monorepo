@@ -1,0 +1,6 @@
+    Finished `release` profile [optimized] target(s) in 0.22s
+Loaded 7 samples from /Users/daniel/Projects/catan-monorepo/data/opening_states/index.json
+[1] sample=0003 state=states/state_0003.json board=boards/board_0003.json
+[2] sample=0004 state=states/state_0004.json board=boards/board_0004.json
+[3] sample=0005 state=states/state_0005.json board=boards/board_0005.json
+[4] sample=0006 state=states/state_0006.json board=boards/board_0006.json

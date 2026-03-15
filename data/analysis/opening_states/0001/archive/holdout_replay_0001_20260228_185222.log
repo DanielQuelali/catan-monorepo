@@ -1,0 +1,5 @@
+    Finished `release` profile [optimized] target(s) in 0.07s
+     Running `target/release/initial-branch-analysis --state data/opening_states/states/state_0001.json --board data/opening_states/boards/board_0001.json --output data/analysis/opening_states/0001/initial_branch_analysis.csv --all-sims-output data/analysis/opening_states/0001/initial_branch_analysis_all_sims.csv --num-sims 0 --budget 3000 --workers 12 --seed 99 --start-seed 1000 --max-turns 1000 --white12 --holdout-only --holdout-replay data/analysis/opening_states/0001/archive/initial_branch_analysis_all_sims_holdout.backup_20260228_172802.csv`
+real 1926.97
+user 20507.81
+sys 61.44

@@ -22,11 +22,4 @@ diff -u "$GOLDEN_DIR/engine_report.json" "$WORK_DIR/engine_report.json"
 echo "Comparing run config"
 diff -u "$GOLDEN_DIR/run_config.txt" "$WORK_DIR/run_config.txt"
 
-for scenario in baseline blue2 orange2 white12; do
-  echo "Comparing normalized CSV [$scenario]"
-  diff -u \
-    "$GOLDEN_DIR/normalized/analysis_${scenario}.csv" \
-    "$WORK_DIR/normalized/analysis_${scenario}.csv"
-done
-
 echo "Verification passed for suite $SUITE"

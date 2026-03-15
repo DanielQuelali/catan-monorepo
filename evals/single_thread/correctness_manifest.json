@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "default_suite": "smoke",
+  "suites": {
+    "smoke": {
+      "seed_start": 1000,
+      "seed_count": 64,
+      "max_turns": 1000
+    },
+    "gate": {
+      "seed_start": 1000,
+      "seed_count": 2048,
+      "max_turns": 1000
+    },
+    "deep": {
+      "seed_start": 1000,
+      "seed_count": 20000,
+      "max_turns": 1000
+    }
+  }
+}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Single-Thread Regression Harness"
+  short_description: "Run deterministic golden regression checks"
+  default_prompt: "Use $single-thread-regression-harness to verify this checkout against the deterministic golden harness."

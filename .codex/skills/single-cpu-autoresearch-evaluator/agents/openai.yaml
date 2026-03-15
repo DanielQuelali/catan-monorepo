@@ -1,0 +1,4 @@
+interface:
+  display_name: "Single-CPU Autoresearch Evaluator"
+  short_description: "Run immutable correctness and paired CPU benchmarks"
+  default_prompt: "Use $single-cpu-autoresearch-evaluator to run the immutable correctness gate and paired single-CPU benchmark lane for this candidate."

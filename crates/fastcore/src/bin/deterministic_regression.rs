@@ -14,12 +14,14 @@ struct Args {
     seed_count: usize,
     max_turns: u16,
     seeds_file: Option<PathBuf>,
+    dump_logs_dir: Option<PathBuf>,
     out: Option<PathBuf>,
 }
 
 #[derive(Serialize)]
 struct RegressionReport {
     format: &'static str,
+    trace_hash_algorithm: &'static str,
     seed_start: Option<u64>,
     seed_count: usize,
     max_turns: u16,
@@ -45,7 +47,7 @@ struct SeedResult {
 }
 
 fn usage() -> &'static str {
-    "Usage: deterministic_regression [--seed-start <u64>] [--seed-count <usize>] [--max-turns <u16>] [--seeds-file <path>] [--out <path>]"
+    "Usage: deterministic_regression [--seed-start <u64>] [--seed-count <usize>] [--max-turns <u16>] [--seeds-file <path>] [--dump-logs-dir <path>] [--out <path>]"
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -53,6 +55,7 @@ fn parse_args() -> Result<Args, String> {
     let mut seed_count = DEFAULT_SEED_COUNT;
     let mut max_turns = DEFAULT_MAX_TURNS;
     let mut seeds_file = None;
+    let mut dump_logs_dir = None;
     let mut out = None;
 
     let mut args = env::args().skip(1);
@@ -88,6 +91,12 @@ fn parse_args() -> Result<Args, String> {
                     .ok_or_else(|| "Missing value for --seeds-file".to_string())?;
                 seeds_file = Some(PathBuf::from(value));
             }
+            "--dump-logs-dir" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| "Missing value for --dump-logs-dir".to_string())?;
+                dump_logs_dir = Some(PathBuf::from(value));
+            }
             "--out" => {
                 let value = args
                     .next()
@@ -106,6 +115,7 @@ fn parse_args() -> Result<Args, String> {
         seed_count,
         max_turns,
         seeds_file,
+        dump_logs_dir,
         out,
     })
 }
@@ -149,17 +159,24 @@ fn stats_winner(stats: &Stats) -> Option<u8> {
         .find_map(|(idx, wins)| (*wins > 0).then_some(idx as u8))
 }
 
-fn fnv1a_64_hex(lines: &[String]) -> String {
-    let mut hash: u64 = 0xcbf29ce484222325;
+fn blake3_hex(lines: &[String]) -> String {
+    let mut hasher = blake3::Hasher::new();
     for line in lines {
-        for byte in line.as_bytes() {
-            hash ^= *byte as u64;
-            hash = hash.wrapping_mul(0x100000001b3);
-        }
-        hash ^= b'\n' as u64;
-        hash = hash.wrapping_mul(0x100000001b3);
+        hasher.update(line.as_bytes());
+        hasher.update(b"\n");
     }
-    format!("{hash:016x}")
+    hasher.finalize().to_hex().to_string()
+}
+
+fn write_log_file(dir: &PathBuf, seed: u64, lines: &[String]) -> Result<(), String> {
+    fs::create_dir_all(dir)
+        .map_err(|err| format!("Failed to create log directory {}: {err}", dir.display()))?;
+    let path = dir.join(format!("seed_{seed}.log"));
+    let mut content = lines.join("\n");
+    content.push('\n');
+    fs::write(&path, content)
+        .map_err(|err| format!("Failed to write log file {}: {err}", path.display()))?;
+    Ok(())
 }
 
 fn main() {
@@ -188,10 +205,17 @@ fn main() {
         let seed_only = [*seed];
         let seed_stats = simulate_many(&seed_only, &config);
         let logs = simulate_policy_log(&seed_only, &config);
-        let trace_hash = logs
+        let log_entries = logs
             .first()
-            .map(|entries| fnv1a_64_hex(entries))
-            .unwrap_or_else(|| fnv1a_64_hex(&[]));
+            .cloned()
+            .unwrap_or_default();
+        if let Some(dir) = &args.dump_logs_dir {
+            if let Err(message) = write_log_file(dir, *seed, &log_entries) {
+                eprintln!("{message}");
+                std::process::exit(1);
+            }
+        }
+        let trace_hash = blake3_hex(&log_entries);
         per_seed.push(SeedResult {
             seed: *seed,
             winner: stats_winner(&seed_stats),
@@ -203,6 +227,7 @@ fn main() {
 
     let report = RegressionReport {
         format: "fastcore-single-thread-regression-v1",
+        trace_hash_algorithm: "blake3",
         seed_start: args.seeds_file.is_none().then_some(args.seed_start),
         seed_count: seeds.len(),
         max_turns: args.max_turns,

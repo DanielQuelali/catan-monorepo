@@ -1,0 +1,189 @@
+{
+  "schema_version": 1,
+  "default_suite": "smoke",
+  "suites": {
+    "smoke": {
+      "warmup_runs": 0,
+      "workloads": [
+        {
+          "id": "fastcore_opening_0001",
+          "kind": "fastcore_bench_value_state",
+          "board": "data/opening_states/boards/board_0001.json",
+          "state": "data/opening_states/states/state_0001.json",
+          "sims": 512,
+          "seed_start": 1000,
+          "max_turns": 1000,
+          "critical": true,
+          "tags": [
+            "fastcore",
+            "playout"
+          ]
+        },
+        {
+          "id": "fastcore_opening_0004",
+          "kind": "fastcore_bench_value_state",
+          "board": "data/opening_states/boards/board_0004.json",
+          "state": "data/opening_states/states/state_0004.json",
+          "sims": 512,
+          "seed_start": 1000,
+          "max_turns": 1000,
+          "critical": true,
+          "tags": [
+            "fastcore",
+            "playout"
+          ]
+        },
+        {
+          "id": "fastcore_opening_0008",
+          "kind": "fastcore_bench_value_state",
+          "board": "data/opening_states/boards/board_0008.json",
+          "state": "data/opening_states/states/state_0008.json",
+          "sims": 512,
+          "seed_start": 1000,
+          "max_turns": 1000,
+          "critical": true,
+          "tags": [
+            "fastcore",
+            "playout"
+          ]
+        },
+        {
+          "id": "fastcore_opening_0012",
+          "kind": "fastcore_bench_value_state",
+          "board": "data/opening_states/boards/board_0012.json",
+          "state": "data/opening_states/states/state_0012.json",
+          "sims": 512,
+          "seed_start": 1000,
+          "max_turns": 1000,
+          "critical": true,
+          "tags": [
+            "fastcore",
+            "playout"
+          ]
+        }
+      ]
+    },
+    "gate": {
+      "warmup_runs": 0,
+      "workloads": [
+        {
+          "id": "fastcore_opening_0001",
+          "kind": "fastcore_bench_value_state",
+          "board": "data/opening_states/boards/board_0001.json",
+          "state": "data/opening_states/states/state_0001.json",
+          "sims": 2048,
+          "seed_start": 1000,
+          "max_turns": 1000,
+          "critical": true,
+          "tags": [
+            "fastcore",
+            "playout"
+          ]
+        },
+        {
+          "id": "fastcore_opening_0004",
+          "kind": "fastcore_bench_value_state",
+          "board": "data/opening_states/boards/board_0004.json",
+          "state": "data/opening_states/states/state_0004.json",
+          "sims": 2048,
+          "seed_start": 1000,
+          "max_turns": 1000,
+          "critical": true,
+          "tags": [
+            "fastcore",
+            "playout"
+          ]
+        },
+        {
+          "id": "fastcore_opening_0008",
+          "kind": "fastcore_bench_value_state",
+          "board": "data/opening_states/boards/board_0008.json",
+          "state": "data/opening_states/states/state_0008.json",
+          "sims": 2048,
+          "seed_start": 1000,
+          "max_turns": 1000,
+          "critical": true,
+          "tags": [
+            "fastcore",
+            "playout"
+          ]
+        },
+        {
+          "id": "fastcore_opening_0012",
+          "kind": "fastcore_bench_value_state",
+          "board": "data/opening_states/boards/board_0012.json",
+          "state": "data/opening_states/states/state_0012.json",
+          "sims": 2048,
+          "seed_start": 1000,
+          "max_turns": 1000,
+          "critical": true,
+          "tags": [
+            "fastcore",
+            "playout"
+          ]
+        }
+      ]
+    },
+    "deep": {
+      "warmup_runs": 1,
+      "workloads": [
+        {
+          "id": "fastcore_opening_0001",
+          "kind": "fastcore_bench_value_state",
+          "board": "data/opening_states/boards/board_0001.json",
+          "state": "data/opening_states/states/state_0001.json",
+          "sims": 20000,
+          "seed_start": 1000,
+          "max_turns": 1000,
+          "critical": true,
+          "tags": [
+            "fastcore",
+            "playout"
+          ]
+        },
+        {
+          "id": "fastcore_opening_0004",
+          "kind": "fastcore_bench_value_state",
+          "board": "data/opening_states/boards/board_0004.json",
+          "state": "data/opening_states/states/state_0004.json",
+          "sims": 20000,
+          "seed_start": 1000,
+          "max_turns": 1000,
+          "critical": true,
+          "tags": [
+            "fastcore",
+            "playout"
+          ]
+        },
+        {
+          "id": "fastcore_opening_0008",
+          "kind": "fastcore_bench_value_state",
+          "board": "data/opening_states/boards/board_0008.json",
+          "state": "data/opening_states/states/state_0008.json",
+          "sims": 20000,
+          "seed_start": 1000,
+          "max_turns": 1000,
+          "critical": true,
+          "tags": [
+            "fastcore",
+            "playout"
+          ]
+        },
+        {
+          "id": "fastcore_opening_0012",
+          "kind": "fastcore_bench_value_state",
+          "board": "data/opening_states/boards/board_0012.json",
+          "state": "data/opening_states/states/state_0012.json",
+          "sims": 20000,
+          "seed_start": 1000,
+          "max_turns": 1000,
+          "critical": true,
+          "tags": [
+            "fastcore",
+            "playout"
+          ]
+        }
+      ]
+    }
+  }
+}

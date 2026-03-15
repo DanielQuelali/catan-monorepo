@@ -32,7 +32,7 @@ Out of scope:
 ## 3. Canonical Input Path
 
 For board `<id>` (`0001`..`0012`):
-- `data/analysis/opening_states/<id>/initial_branch_analysis_all_sims_holdout.csv`
+- `runtime-data/opening_states/<id>/initial_branch_analysis_all_sims_holdout.csv`
 
 Hex Gambit should read this schema (direct CSV or `.csv.gz` equivalent).
 
@@ -69,7 +69,7 @@ All optional `WIN_<LEADER>_*` columns are conditioned on the leader winning that
 ## 5. Runtime Contract
 
 1. For selected board `<id>`, load:
-- `data/analysis/opening_states/<id>/initial_branch_analysis_all_sims_holdout.csv.gz`
+- `runtime-data/opening_states/<id>/initial_branch_analysis_all_sims_holdout.csv.gz`
 2. If `.gz` is unavailable, load raw `.csv` fallback.
 3. Parse the CSV rows and build ranking/index structures in memory.
 

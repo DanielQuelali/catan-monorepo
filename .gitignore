@@ -8,18 +8,7 @@ coverage/
 
 # Rust
 **/target/
-data/analysis/*
-!data/analysis/opening_states/
-data/analysis/opening_states/*
-!data/analysis/opening_states/*/
-data/analysis/opening_states/**
-!data/analysis/opening_states/*/initial_branch_analysis.csv
-!data/analysis/opening_states/*/initial_branch_analysis_all_sims_holdout.csv
-!data/analysis/opening_states/*/initial_branch_analysis_all_sims_holdout.csv.gz
-data/analysis/opening_states/**/*.log
-data/analysis/opening_states/**/archive/
-data/analysis/opening_states/**/repro_*/
-data/analysis/opening_states/**/*.bak
+data/analysis/
 
 # Local env/editor
 .env

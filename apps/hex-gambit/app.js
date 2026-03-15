@@ -4,7 +4,7 @@ const panelViewport = document.getElementById("panel-viewport");
 let fitRaf = 0;
 
 const BOARD_DATA_URL = "./data/boards.json";
-const ANALYSIS_ROOT_URL = "./data/analysis/opening_states";
+const ANALYSIS_ROOT_URL = "./runtime-data/opening_states";
 const HOLDOUT_CSV_BASENAME = "initial_branch_analysis_all_sims_holdout.csv";
 const HEX_SIZE = 44;
 const VIEW_PADDING = 4;

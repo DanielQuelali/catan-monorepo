@@ -28,9 +28,9 @@ jobs:
       - name: Prepare site artifact
         run: |
           mkdir -p _site
-          rsync -a apps/hex-gambit/ _site/
-          mkdir -p _site/data/analysis
-          rsync -a data/analysis/opening_states/ _site/data/analysis/opening_states/
+          rsync -a --exclude 'runtime-data' apps/hex-gambit/ _site/
+          mkdir -p _site/runtime-data/opening_states
+          rsync -a runtime-data/opening_states/ _site/runtime-data/opening_states/
           touch _site/.nojekyll
 
       - name: Configure Pages

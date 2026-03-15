@@ -117,7 +117,7 @@ const params = new URLSearchParams(window.location.search);
 const dataDirParam = params.get("data");
 const analysisDirParam = params.get("analysis");
 const DATA_ROOT = new URL(dataDirParam || "/data/opening_states/", window.location.href);
-const ANALYSIS_ROOT = new URL(analysisDirParam || "/data/analysis/opening_states/", window.location.href);
+const ANALYSIS_ROOT = new URL(analysisDirParam || "/runtime-data/opening_states/", window.location.href);
 
 let samples = [];
 let current = 0;

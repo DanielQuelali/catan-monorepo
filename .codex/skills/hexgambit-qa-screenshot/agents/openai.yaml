@@ -1,0 +1,4 @@
+interface:
+  display_name: "HexGambit QA Screenshot"
+  short_description: "Run hexgambit-qa audit and open screenshots"
+  default_prompt: "Capture fresh Hex Gambit QA screenshots and inspect the desktop placement image first."

@@ -1,291 +1,248 @@
 # Hex Gambit - Technical Spec
 
-Status: Draft  
+Status: Active  
 Owner: Engineering  
-Last Updated: 2026-02-16
+Last Updated: 2026-03-23
 
 ## 1. Purpose
 
-Define implementation architecture, data contracts, and deterministic profiling logic for Hex Gambit.
+Define the current implementation architecture, data contracts, deterministic decision logic, and runtime behavior for Hex Gambit.
 
-## 2. Legacy Preservation
-
-The competitor-focused documents are preserved unchanged at:
-
-1. `docs/legacy/competitor/initial-placement-product-prd-competitor-legacy.md`
-2. `docs/legacy/competitor/initial-placement-technical-spec-competitor-legacy.md`
-
-## 3. MVP Product Contract Alignment
+## 2. Product Contract Alignment
 
 This spec implements the active PRD at `docs/initial-placement-product-prd.md`:
 
-1. WHITE-only initial placement flow (4th player), fixed 4-step board sequence.
-2. Exactly 2 boards per session in MVP.
-3. No single-board retry after board completion.
-4. Full-session restart is allowed.
-5. End-of-session output includes playstyle, explanation, and badge.
-6. Local-only runtime with no state persistence across web sessions.
+1. WHITE-only opening-placement evaluation.
+2. Deterministic 4-step per-board flow (`s1`, `e1`, `s2`, `e2`).
+3. Session progression through all boards configured in `apps/hex-gambit/data/boards.json`.
+4. No in-session replay of completed boards.
+5. End-of-session output includes playstyle, rationale, and badge.
+6. Local-only runtime with in-memory session state.
 
-## 4. Repository Context
+## 3. Repository Context
 
-1. `apps/hex-gambit`
-2. `crates/fastcore`
-3. `crates/initial-branch-analysis`
-4. `data/`
-5. `data/analysis/`
+1. App runtime: `apps/hex-gambit`
+2. Analysis producer: `crates/initial-branch-analysis`
+3. Analysis orchestration script: `scripts/run_opening_white12_analysis.py`
+4. Runtime analysis assets: `runtime-data/opening_states/`
 
-## 5. Architecture
+## 4. Architecture
 
-## 5.1 High-Level Components
+## 4.1 High-level components
 
 1. Data producer
-- `crates/initial-branch-analysis` produces analysis artifacts.
+- `crates/initial-branch-analysis` emits per-board analysis CSV artifacts.
 
-2. Data preparation
-- Converter/indexer emits board artifacts consumable by UI.
+2. Runtime assets
+- Board fixture payload: `apps/hex-gambit/data/boards.json`
+- Analysis CSV assets: `runtime-data/opening_states/<board_id>/initial_branch_analysis_all_sims_holdout.csv(.gz)`
 
-3. Training UI
-- `apps/hex-gambit` renders session flow, board flow, and playstyle results.
+3. UI runtime
+- `apps/hex-gambit/app.js` handles model build, state machine, legal-action gating, scoring, and rendering.
 
-## 5.2 UI Module Boundaries
-
-Suggested modules under `apps/hex-gambit/`:
+## 4.2 Runtime module boundaries
 
 1. `index.html`
-- entry shell and static layout container
+- static shell and viewport containers.
 
 2. `app.js`
-- session state machine
-- board progression logic
-- deterministic playstyle classifier
-- summary computation and rendering
+- payload load and normalization
+- deterministic session/board state transitions
+- CSV load and ranking derivation
+- playstyle signal aggregation and summary rendering.
 
 3. `styles.css`
-- visual system and responsive behavior for main, board, and summary screens
+- responsive visual system for intro, placement, board-result, summary, and error states.
 
-4. `README.md`
-- local run instructions and product notes
+## 5. Data Contracts
 
-## 6. Data Contracts
+## 5.1 Board payload contract (`boards.json`)
 
-## 6.1 Course Manifest Contract
+Top-level required fields:
 
-Required fields:
+1. `meta`
+2. `boardModel`
+3. `boards`
 
-1. `schemaVersion: number`
-2. `courseId: string`
-3. `title: string`
-4. `boards: array`
-5. `boards[].id: string`
-6. `boards[].title: string`
-7. `boards[].dataUrl: string`
+`meta` fields used by runtime:
 
-Validation rules:
+1. `currentColor` or `perspectiveColor` (defaults to `WHITE` if absent)
+2. `sequenceKeys` (optional; falls back to default 4-step sequence)
 
-1. `boards` must contain exactly 2 entries in MVP.
-2. `boards[].id` must be unique.
-3. `dataUrl` must resolve within approved local data roots.
+`boardModel` fields:
 
-## 6.2 Board Metadata Contract
+1. `nodes[]` with `id`, `tile_coordinate`, `direction`
+2. `edges[]` with `id` node pair, `tile_coordinate`, `direction`
 
-Required fields:
+`boards[]` fields:
 
-1. `schemaVersion: number`
-2. `format: string`
-3. `id: string`
-4. `title: string`
-5. `boardStateUrl: string`
-6. `encoding: string`
-7. `fieldsPerRow: number`
-8. `sequenceCount: number`
-9. `winScale: number`
-10. `dataBinUrl: string`
+1. `id`
+2. `label`
+3. `tiles[]` (resource/desert/port/water descriptors)
+4. `basePlacedNodes[]`
+5. `basePlacedEdges[]`
+6. optional analysis overrides:
+- `analysis_id` / `analysisId`
+- `analysis_path` / `analysisPath`
+- `analysis_root` / `analysisRoot`
+7. optional `seedSelection`
 
-Validation rules:
+Validation and behavior notes:
 
-1. `format` must be recognized by decoder.
-2. `fieldsPerRow` must match decoder expectation.
-3. `sequenceCount` must match payload length.
-4. Invalid board payload hard-fails that board load.
+1. Board count is dynamic and equals `boards.length` (currently 8).
+2. First board geometry (`boards[0]`) is used as board-model template for rendering.
+3. Missing or invalid payload hard-fails load and enters error stage.
 
-## 6.3 Binary Sequence Contract
+## 5.2 Analysis artifact contract
 
-Per row values (uint16 little-endian):
+Per board, runtime attempts analysis sources in order:
 
-1. `settlement1`
-2. `road1_a`
-3. `road1_b`
-4. `settlement2`
-5. `road2_a`
-6. `road2_b`
-7. `winWhiteScaled`
+1. explicit board analysis path (`analysis_path`/`analysisPath`) if provided
+2. default root path:
+- `./runtime-data/opening_states/<analysis_id>/initial_branch_analysis_all_sims_holdout.csv.gz`
+- fallback `.csv`
 
-Derived:
+Required CSV columns used by runtime:
 
-1. `winWhite = winWhiteScaled / winScale`
+1. `LEADER_SETTLEMENT`
+2. `LEADER_ROAD`
+3. `LEADER_SETTLEMENT2`
+4. `LEADER_ROAD2`
+5. `WIN_WHITE`
 
-## 7. Deterministic Domain Logic
+Optional but consumed when present:
 
-## 7.1 Board Step State Machine
+1. `WIN_<COLOR>` columns for non-WHITE player win bars
+2. `SIMS_RUN` for weighted aggregation
+3. follower placement columns for board-result reveal rendering
 
-States:
+## 6. Deterministic Domain Logic
 
-1. `choose_settlement_1`
-2. `choose_road_1`
-3. `choose_settlement_2`
-4. `choose_road_2`
-5. `board_complete`
+## 6.1 Runtime stage state machine
 
-Rules:
+Stages:
 
-1. Each step accepts only legal options from current prefix.
-2. Invalid selections do not mutate state.
-3. Completion occurs only when a full valid sequence exists.
-
-## 7.2 Course State Machine
-
-States:
-
-1. `course_ready`
-2. `board_1_active`
-3. `board_1_complete_locked`
-4. `board_2_active`
-5. `course_complete`
+1. `loading`
+2. `intro`
+3. `placement`
+4. `board_result`
+5. `summary`
+6. `error`
 
 Rules:
 
-1. After board 1 completes, transition only to board 2 (no board 1 replay path).
-2. After board 2 completes, transition to `course_complete`.
-3. `restart_course` is allowed from any post-start state and resets to `board_1_active`.
+1. App starts in `loading`, then transitions to `intro` only after payload + all board analyses load.
+2. Any load/parse failure transitions to `error`.
+3. `startSession()` resets deterministic session state and enters `placement`.
 
-## 7.3 Ranking and Tie-Breaks
+## 6.2 Per-board step progression
 
-Per-step option ordering:
+Step keys (default order):
 
-1. `best_continuation_win_white` descending.
-2. Settlement tie-break: settlement id ascending.
-3. Road tie-break: canonical edge ascending.
-
-Global sequence rank per board:
-
-1. Sort valid full sequences by `winWhite` descending.
-2. Tie-break by canonical sequence tuple ascending.
-3. Rank is 1-based ordinal position.
-4. Display format is `rank / N`.
-
-## 7.4 Playstyle Classifier
-
-Target playstyles:
-
-1. `OWS Dev Card Specialist`
-2. `Road Network Architect`
-3. `Top-Rank Absolutist`
-
-Signal definitions:
-
-1. `picked_top_ows_devcard_signal`
-- true when chosen action best preserves Ore/Wheat/Sheep access and development-card tempo.
-
-2. `picked_top_road_expansion`
-- true on road steps when chosen road edge matches top road-expansion heuristic.
-
-3. `picked_rank1_prefix`
-- true when chosen action remains consistent with the current board's rank-1 global sequence prefix.
-
-Scoring:
-
-1. `OWS Dev Card Specialist` score: count of `picked_top_ows_devcard_signal`.
-2. `Road Network Architect` score: count of `picked_top_road_expansion` on road steps.
-3. `Top-Rank Absolutist` score: count of `picked_rank1_prefix`.
-
-Winner selection:
-
-1. Highest total score wins.
-2. Ties resolve deterministically in this precedence order:
-- `Top-Rank Absolutist`
-- `OWS Dev Card Specialist`
-- `Road Network Architect`
-
-Explanation output:
-
-1. Include winner playstyle name.
-2. Include top 1-2 supporting behavior statements from observed signals.
-3. Include concise confidence phrase derived from winner margin.
-
-## 8. Badge Mapping Contract
-
-1. `OWS Dev Card Specialist` -> `badge_ows_devcard_specialist`
-2. `Road Network Architect` -> `badge_road_network_architect`
-3. `Top-Rank Absolutist` -> `badge_top_rank_absolutist`
+1. `s1` settlement
+2. `e1` road
+3. `s2` settlement
+4. `e2` road
 
 Rules:
 
-1. Exactly one badge is awarded per completed session.
-2. Badge is shown in result UI immediately after playstyle assignment.
-3. MVP does not persist badge inventory across web sessions.
+1. Only legal options for current step are selectable.
+2. Invalid selections are ignored and do not mutate state.
+3. Board result is computed only after the final step is selected.
 
-## 9. UI Behavior Requirements
+## 6.3 Session progression
 
-1. Session progress must be explicit (`Board 1/2`, `Board 2/2`).
-2. Completed board UI is locked from replay in current run.
-3. Full-session restart action is always available after first board starts.
-4. Placement interaction is board-native: click legal nodes for settlements and legal edges for roads.
-5. Board result shows selected win% and `rank / N`.
-6. Session result shows average board rank summary, playstyle, explanation, and badge.
-7. Product mode must not render upload/import controls.
+Rules:
 
-## 10. Session and Storage Rules
+1. Session iterates boards in payload order from index `0` to `boards.length - 1`.
+2. Continue action advances forward only.
+3. Completed board replay is not exposed.
+4. Restart resets board index, step index, selections, signals, and results.
 
-1. Runtime state is in-memory only for MVP.
-2. No cross-session persistence is allowed.
-3. New web session starts from empty session/playstyle state.
+## 6.4 Board ranking and tie-breaks
 
-## 11. Error Handling
+1. CSV rows are aggregated per full sequence key (`s1|e1|s2|e2`).
+2. Win percentages are weighted by `SIMS_RUN` when available; otherwise unweighted averaging is used.
+3. Sequence ranking sort order:
+- WHITE win percent descending
+- canonical sequence tuple ascending (deterministic tie-break).
+4. Rank display is `rank / N`.
 
-1. Course manifest failure: block course start with local-only safe error.
-2. Board payload failure: block affected board and offer full-session restart.
-3. Missing completion sequence: show explicit local processing error for that board.
+## 6.5 Playstyle classification
 
-## 12. Performance Requirements
+Signals:
 
-1. Parse/validate course manifest once per session.
-2. Lazy-load board payload per board.
-3. Keep per-step option derivation under 100 ms p95 on fixture data.
-4. Keep playstyle assignment under 20 ms p95 per session.
+1. `rank`: chosen action follows top-ranked prefix.
+2. `ows`: settlement action aligned with best continuation win.
+3. `road`: road action aligned with best continuation win.
 
-## 13. Testing Strategy
+Signal aggregation:
 
-## 13.1 Contract Tests
+1. One signal emitted per placement step across entire session.
+2. Winner is highest count.
+3. Deterministic tie precedence:
+- `rank`
+- `ows`
+- `road`
 
-1. Course manifest schema and exact 2-board MVP constraint.
-2. Board metadata and binary payload validation.
-3. Feature derivation tests for playstyle signals.
+Mapping:
 
-## 13.2 Domain Unit Tests
+1. `rank` -> `Top-Rank Absolutist`
+2. `ows` -> `OWS Dev Card Specialist`
+3. `road` -> `Road Network Architect`
 
-1. Board state machine transition coverage.
-2. Course state machine coverage with board lock semantics.
-3. Rank computation determinism.
-4. Classifier determinism and tie precedence behavior.
+## 7. UI Behavior Requirements
 
-## 13.3 Integration Tests
+1. Intro copy must explain evaluation objective and session result outcome.
+2. Placement screen must show step progress over total session steps.
+3. Board-result screen must show board completion plus rank context.
+4. Summary must show playstyle, rationale, badge, and per-board rank recap.
+5. Restart controls must be available on board-result and summary screens.
 
-1. End-to-end 2-board session completion.
-2. Verify no single-board retry action is possible after board completion.
-3. Verify full-session restart resets board and playstyle state.
-4. Verify result screen includes playstyle, explanation, and badge.
+## 8. Session and Storage Rules
 
-## 14. CI Gates
+1. Session state is runtime memory only.
+2. No localStorage/server persistence contract is required.
+3. Refreshing browser context resets session state.
 
-1. Contract tests pass.
-2. Domain and integration tests pass.
-3. Lint/typecheck pass.
-4. Production build contains no upload controls for trainer mode.
+## 9. Error Handling
 
-## 15. Documentation Artifacts
+1. Board payload load failure -> `error` stage with explicit message.
+2. Analysis CSV load/decode failure for any board -> `error` stage.
+3. Missing sequence result for completed board selection -> explicit error; no default 0% fallback.
 
-1. Product PRD and embedded flow diagram:
-- `docs/initial-placement-product-prd.md`
-2. Legacy competitor docs:
+## 10. Performance Expectations
+
+1. Payload parse and geometry build occur once per app load.
+2. Board analyses are loaded before intro state.
+3. Legal-option derivation and board rendering remain interactive under local fixture sizes.
+
+## 11. Testing Strategy
+
+## 11.1 Contract checks
+
+1. Validate `boards.json` shape and board-count assumptions for release bundles.
+2. Validate analysis CSV presence for all configured board ids.
+3. Validate deterministic rank ordering from a fixed CSV sample.
+
+## 11.2 Runtime behavior checks
+
+1. Full-session completion across current board set.
+2. No completed-board replay path in-session.
+3. Restart resets state and returns to initial placement board.
+4. Error stage triggered for missing/invalid analysis file.
+
+## 11.3 Regression checks
+
+1. Verify stable playstyle output for identical decision paths.
+2. Verify rank display format remains `rank / N`.
+3. Verify summary always includes badge and rationale.
+
+## 12. Documentation Artifacts
+
+1. Product PRD: `docs/initial-placement-product-prd.md`
+2. Analysis artifact contract: `docs/hex-gambit-analysis-artifact-spec.md`
+3. Current-state index: `docs/README.md`
+4. Legacy competitor docs (preserved):
 - `docs/legacy/competitor/initial-placement-product-prd-competitor-legacy.md`
 - `docs/legacy/competitor/initial-placement-technical-spec-competitor-legacy.md`

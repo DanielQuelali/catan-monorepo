@@ -1,52 +1,70 @@
 # White12 Holdout CSV Spec (Hex Gambit)
 
-Status: Draft  
+Status: Active  
 Owner: Engineering  
-Last Updated: 2026-03-03
+Last Updated: 2026-03-23
 
 ## 1. Goal
 
-Hex Gambit should use only the WHITE12 holdout dataset.
+Define the current analysis artifact contract consumed by Hex Gambit runtime and adjacent tooling.
 
-Required source format:
+Primary runtime artifact:
+
 - `initial_branch_analysis_all_sims_holdout.csv`
 
-Transport/storage format:
-- `initial_branch_analysis_all_sims_holdout.csv.gz` (preferred)
+Preferred transport form:
 
-No additional analysis file types are required.
+- `initial_branch_analysis_all_sims_holdout.csv.gz`
 
-## 2. Scope (Strict)
+## 2. Scope
 
 In scope:
-- WHITE12 only
-- Holdout CSV only
-- Optional gzip compression of that same CSV
+
+- WHITE12 holdout all-sims CSV rows.
+- `.csv.gz` primary and `.csv` fallback load behavior.
+- Runtime ranking fields and follower-placement fields used by Hex Gambit.
 
 Out of scope:
-- `initial_branch_analysis.csv`
-- TS/all-sims CSV ingestion
-- Custom binary format
-- Manifest/course layout
 
-## 3. Canonical Input Path
+- `initial_branch_analysis.csv` as Hex Gambit runtime input.
+- Custom binary conversion format.
+- Non-holdout analysis ingestion for Hex Gambit.
 
-For board `<id>` (`0001`..`0012`):
-- `runtime-data/opening_states/<id>/initial_branch_analysis_all_sims_holdout.csv`
+## 3. Canonical Paths and Coverage
 
-Hex Gambit should read this schema (direct CSV or `.csv.gz` equivalent).
+1. Runtime path pattern:
+- `runtime-data/opening_states/<id>/initial_branch_analysis_all_sims_holdout.csv(.gz)`
 
-## 4. Required Columns
+2. Current repository state:
+- Opening-state sample index (`data/opening_states/index.json`) contains `0001..0012`.
+- Tracked runtime analysis directories currently contain `0001..0009`.
+- Current Hex Gambit board payload consumes `0001..0008`.
 
-- `LEADER_SETTLEMENT`, `LEADER_ROAD`
-- `FOLLOWER1_SETTLEMENT`, `FOLLOWER1_ROAD` (WHITE second)
-- `FOLLOWER2_SETTLEMENT`, `FOLLOWER2_ROAD` (ORANGE)
-- `FOLLOWER3_SETTLEMENT`, `FOLLOWER3_ROAD` (BLUE)
-- `FOLLOWER4_SETTLEMENT`, `FOLLOWER4_ROAD` (RED)
+3. Source-generation roots:
+- Analysis outputs are generated under `data/analysis/opening_states/<id>/`.
+- Runtime-consumed assets are synchronized under `runtime-data/opening_states/<id>/`.
+
+## 4. Required and Optional Columns
+
+Required sequence-identifying columns:
+
+- `LEADER_SETTLEMENT`
+- `LEADER_ROAD`
+- `LEADER_SETTLEMENT2`
+- `LEADER_ROAD2`
 - `WIN_WHITE`
-- `SIMS_RUN`
 
-Optional leader-conditioned win-condition columns (holdout rows only):
+Required for weighted aggregation when available:
+
+- `SIMS_RUN` (runtime falls back to unweighted averaging if missing/invalid)
+
+Optional but consumed when present:
+
+- `WIN_RED`, `WIN_BLUE`, `WIN_ORANGE`, `WIN_WHITE` (per-color win bars)
+- follower-placement columns (`FOLLOWER*`) used in board-result reveal
+
+Optional leader-conditioned win-stat columns:
+
 - `WIN_<LEADER>_PCT_HAS_SETTLEMENT`
 - `WIN_<LEADER>_AVG_SETTLEMENTS`
 - `WIN_<LEADER>_AVG_CITIES`
@@ -64,61 +82,37 @@ Optional leader-conditioned win-condition columns (holdout rows only):
 - `WIN_<LEADER>_AVG_TURN_FIRST_CITY`
 - `WIN_<LEADER>_AVG_TURN_FIRST_SETTLEMENT`
 
-All optional `WIN_<LEADER>_*` columns are conditioned on the leader winning that playout.
+## 5. Runtime Load Contract
 
-## 5. Runtime Contract
+For each board:
 
-1. For selected board `<id>`, load:
-- `runtime-data/opening_states/<id>/initial_branch_analysis_all_sims_holdout.csv.gz`
-2. If `.gz` is unavailable, load raw `.csv` fallback.
-3. Parse the CSV rows and build ranking/index structures in memory.
+1. Try `initial_branch_analysis_all_sims_holdout.csv.gz`.
+2. Fall back to raw `.csv` when `.gz` is unavailable or unsupported.
+3. Parse rows into deterministic sequence aggregates.
+4. Rank sequences by WHITE win% descending with canonical tuple tie-break.
+5. Build rank map and lookup map used by board result and signal inference.
 
-No conversion step to separate binary artifacts is required.
+No binary post-processing step is required by Hex Gambit runtime.
 
 ## 6. Acceptance Criteria
 
-1. Hex Gambit works using only holdout CSV data.
-2. No dependency on non-holdout analysis files.
-3. `.csv.gz` and `.csv` produce equivalent parsed rows.
-4. Ranking is deterministic for the same holdout input.
+1. Hex Gambit completes sessions using holdout CSV artifacts only.
+2. `.csv.gz` and `.csv` yield equivalent ranked sequence results for identical content.
+3. Identical input rows produce identical rank ordering.
+4. Missing sequence rows for a chosen completed path fail explicitly (no silent default result).
 
-## 7. Resume Note (Paused Run)
+## 7. Mode Safety: Replay vs Rerun
 
-Paused run (stopped on 2026-02-22) used:
-- `--holdout-only --holdout-rerun --budget 3000 --num-sims 200 --exclude-sample-ids 0001`
-- Log: `data/analysis/opening_states/holdout_except_0001_b3000_n200_20260222_143152.log`
-- Last started sample in log: `0010`
+Canonical intent model is documented in:
 
-Interpretation of that paused command:
-- Mode intent: `rerun` (via legacy `--holdout-rerun`)
-- Output scope: `holdout` (via legacy `--holdout-only`)
-
-After Mac reboot, resume in tmux by rerunning remaining boards (safe to rerun `0010`):
-
-```bash
-tmux new -d -s holdout_resume_$(date +%Y%m%d_%H%M%S) \
-'cd /Users/daniel/Projects/catan-monorepo && \
-python3 scripts/run_opening_white12_analysis.py \
-  --holdout-only --holdout-rerun --budget 3000 --num-sims 200 \
-  --exclude-sample-ids 0001,0002,0003,0004,0005,0006,0007,0008,0009 \
-  > data/analysis/opening_states/holdout_resume.log 2>&1'
-```
-
-## 8. Mode Safety: Replay vs Rerun (Critical)
-
-Canonical model (runbook):
-- `--holdout-mode replay|rerun|reuse`
-- `--all-sims-scope all|holdout`
-
-Current CLI still commonly uses legacy flags, but semantics remain strict:
-
-- `--holdout-rerun`: recomputes holdout summaries (not replay-file mode)
-- `--holdout-replay <path>`: replays explicit rows from a replay CSV
-
-If a request says "replay", command must include `--holdout-replay <path>`.
-Do not substitute `--holdout-rerun`.
-
-Authoritative references:
 - `docs/holdout-modes-runbook.md`
-- `docs/holdout-parameter-overhaul-plan-2026-03-03.md`
-- `docs/holdout-replay-incident-postmortem-2026-03-03.md`
+
+Current CLI compatibility behavior remains:
+
+- `--holdout-rerun`: recompute holdout summaries.
+- `--holdout-replay <path>`: replay explicit rows from a replay CSV.
+
+Safety rule:
+
+- Replay intent requires `--holdout-replay <path>`.
+- Rerun intent must not substitute replay input.

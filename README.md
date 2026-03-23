@@ -1,26 +1,54 @@
 # catan-monorepo
 
-Clean monorepo containing:
+Monorepo for Catan simulation, analysis, UI surfaces, and evaluation automation.
 
-- `crates/fastcore`: Rust fastcore library extracted from `catan-sim/fastcore`
-- `crates/initial-branch-analysis`: Rust analysis binary separated from `fastcore`
-- `apps/catanatron-ui`: UI extracted from `catan-sim/catanatron/ui`
-- `apps/hex-gambit`: standalone Hex Gambit playstyle evaluator web app
+## Repository surfaces
 
-Run Hex Gambit from repo root:
+- `crates/fastcore`: deterministic simulation core and benchmarking/regression binaries.
+- `crates/initial-branch-analysis`: analysis CLI for opening-placement branches.
+- `apps/hex-gambit`: standalone opening-placement evaluator web app.
+- `apps/opening-board-viewer`: diagnostics viewer for opening-state boards + holdout analysis.
+- `evals/single_thread`: deterministic correctness + serialized benchmark harness.
+- `scripts/`: analysis wrappers, campaign automation, and operator tooling.
 
-`./run-hex-gambit.sh`
+## Quick start
 
-This launcher always frees Hex Gambit port `8080` first, then starts the server.
+Hex Gambit from repo root:
 
-Run initial branch analysis from repo root:
+```bash
+./run-hex-gambit.sh
+```
 
-`cargo run -p initial-branch-analysis -- --white12 --budget 10 --holdout-sims 0`
+Opening Board Viewer from repo root:
 
-Default analysis outputs are written under:
+```bash
+node apps/opening-board-viewer/serve.mjs --host 127.0.0.1 --port 8091
+```
 
-- `data/analysis/`
+Initial branch analysis from repo root:
 
-Default input data lives under:
+```bash
+cargo run -p initial-branch-analysis -- --white12 --budget 10 --holdout-sims 0
+```
 
-- `data/`
+Batch opening-state analysis wrapper:
+
+```bash
+python3 scripts/run_opening_white12_analysis.py --help
+```
+
+Single-CPU campaign harness:
+
+```bash
+evals/single_thread/perf_campaign.sh --help
+```
+
+## Data roots
+
+- Input fixtures: `data/`
+- Analysis outputs: `data/analysis/`
+- Runtime analysis assets served to static apps: `runtime-data/`
+
+## Documentation index
+
+See `docs/README.md` for active vs superseded docs and current-state references.
